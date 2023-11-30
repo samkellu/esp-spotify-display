@@ -2,6 +2,9 @@
 #include "DFRobot_GDL.h"
 #include "credentials.h"
 #include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <ESP8266WebServer.h>
+#include <WiFiClient.h>
 
 #define POT A0
 #define TFT_CS  D6
@@ -9,6 +12,8 @@
 #define TFT_DC  D4
 #define TFT_WIDTH 240
 #define TFT_HEIGHT 320
+
+const String ENDPOINT = "https://api.spotify.com/v1/me";
 
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 
@@ -115,7 +120,7 @@ class PlaybackBar {
 class SpotifyConn {
   private:
     WiFiClient client;
-
+    String auth;
 
   public:
 
@@ -130,7 +135,28 @@ class SpotifyConn {
       Serial.printf("Successfully connected to %s!\n", ssid);
     }
 
+    // void refreshAuth() {
+
+    //   http.begin(client, "https://accounts.spotify.com/api/token");
+    //   String auth = "Basic " + base64.encode(String(CLIENT) + ":" + String(CLIENT_SECRET))
+
+    //   http.end();
+
+    // }
+
+    // void getNowPlaying() {
+
+    //   String path = ENDPOINT + "/player";
+    //   http.begin(client, )
+    // }
+
 };
+
+ESP8266WebServer server(80);
+void webServerHandleRoot() {
+  Serial.println("Serving");
+  server.send(200, "text/html", "Im a webserver\r\n");
+}
 
 PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 5, 40, COLOR_RGB565_WHITE);
 SpotifyConn spotifyConn = SpotifyConn();
@@ -139,11 +165,16 @@ void setup() {
   Serial.begin(115200);
   screen.begin();
   screen.fillScreen(COLOR_RGB565_BLACK);
+  server.on("/", webServerHandleRoot);
+  server.begin();
   spotifyConn.connect(SSID, PASSPHRASE);
 }
 
 void loop(){
+  server.handleClient();
   delay(50);
+  screen.print(WiFi.localIP());
+  screen.setCursor(0,0);
   playbackBar.draw();
   if (play++%50 < 30) {
     playbackBar.setPlayState(1);
