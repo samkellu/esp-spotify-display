@@ -1,6 +1,7 @@
 
 #include "DFRobot_GDL.h"
-#include <vector>
+#include "credentials.h"
+#include <ESP8266WiFi.h>
 
 #define POT A0
 #define TFT_CS  D6
@@ -81,7 +82,7 @@ class PlaybackBar {
           screen.drawPixel(i, y, COLOR_RGB565_BLACK);
           screen.drawPixel(i, y + closingWave[(time + i)%numSamples], color);
         }
-        delay(30);
+        delay(40);
         for (int i = x; i < bound; i++) {
           screen.drawPixel(i, y + closingWave[(time + i)%numSamples], COLOR_RGB565_BLACK);
           screen.drawPixel(i, y + wave[(time + i)%numSamples], color);
@@ -93,7 +94,7 @@ class PlaybackBar {
       for (int i = prevProgressX; i < bound; i++) {
         screen.drawFastVLine(i, y-2*height, 4*height, COLOR_RGB565_BLACK);
       }
-      screen.drawFastHLine(bound, y, width-x, color);
+      screen.drawFastHLine(bound, y, width + x - bound, color);
       screen.drawFastVLine(bound, y-2*height, 4*height, color);
       prevProgressX = bound;
 
@@ -102,7 +103,7 @@ class PlaybackBar {
         screen.drawPixel(i, y + wave[(time + i - deltaT)%numSamples], COLOR_RGB565_BLACK);
         screen.drawPixel(i, y + wave[(time + i)%numSamples], color);
       }
-      time+=deltaT;
+      time += deltaT;
     }
 
     void setPlayState(bool state) {
@@ -110,12 +111,35 @@ class PlaybackBar {
     }
 };
 
-PlaybackBar playbackBar(15, 280, TFT_WIDTH-30, 5, 5, 40, COLOR_RGB565_WHITE);
+
+class SpotifyConn {
+  private:
+    WiFiClient client;
+
+
+  public:
+
+    // Connects to the network specified in credentials.h
+    void connect(const char* ssid, const char* passphrase) {
+      Serial.printf("Attempting connection to %s...\n", ssid);
+      WiFi.begin(ssid, passphrase);
+      while ((WiFi.status() != WL_CONNECTED)) {
+        delay(200);
+      }
+
+      Serial.printf("Successfully connected to %s!\n", ssid);
+    }
+
+};
+
+PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 5, 40, COLOR_RGB565_WHITE);
+SpotifyConn spotifyConn = SpotifyConn();
 int play = 0;
 void setup() {
   Serial.begin(115200);
   screen.begin();
   screen.fillScreen(COLOR_RGB565_BLACK);
+  spotifyConn.connect(SSID, PASSPHRASE);
 }
 
 void loop(){
