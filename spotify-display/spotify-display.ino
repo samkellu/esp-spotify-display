@@ -1,10 +1,14 @@
 
 #include "DFRobot_GDL.h"
 #include "credentials.h"
-#include <ESP8266WiFi.h>
+#include "webpage.h"
+#include <ESP8266WiFi.h> 
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
+
+#include <ArduinoJson.h>
+#include <base64.h>
 
 #define POT A0
 #define TFT_CS  D6
@@ -119,11 +123,18 @@ class PlaybackBar {
 
 class SpotifyConn {
   private:
-    WiFiClient client;
-    String auth;
+    WiFiClientSecure client;
+    HTTPClient httpsClient;
+    String accessToken;
+    String refreshToken;
+    int expiry;
 
   public:
 
+    SpotifyConn() {
+      // Ignore ssl
+      client.setInsecure();
+    }
     // Connects to the network specified in credentials.h
     void connect(const char* ssid, const char* passphrase) {
       Serial.printf("Attempting connection to %s...\n", ssid);
@@ -135,12 +146,39 @@ class SpotifyConn {
       Serial.printf("Successfully connected to %s!\n", ssid);
     }
 
+    bool getAuth(String code) {
+
+      bool ret = false;
+      httpsClient.begin(client, "https://accounts.spotify.com/api/token");
+      // String body = "grant_type=authorization_code&code=" + code + "&redirect_uri='http://192.168.1.15/callback'";
+      // String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
+      // http.addHeader("Authorization", auth);
+      char body[512];
+      const char* base = "grant_type=client_credentials&client_id=%s&client_secret=%s";
+      sprintf(body, base, CLIENT, CLIENT_SECRET);
+      httpsClient.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+      Serial.println(body);
+      int status = httpsClient.POST(body);
+      if (status == HTTP_CODE_OK) {
+        String resp = httpsClient.getString();
+        DynamicJsonDocument jsonDocument(1024);
+
+        accessToken = jsonDocument["access_token"].as<String>();
+        // refreshToken = jsonDocument["refresh_token"].as<String>();
+        expiry = jsonDocument["expires_in"];
+        ret = true;
+
+      } else {
+        Serial.printf("Error getting response from spotify auth. %d\n", status);
+      }
+
+      httpsClient.end();
+      return ret;
+    }
+
     // void refreshAuth() {
 
-    //   http.begin(client, "https://accounts.spotify.com/api/token");
-    //   String auth = "Basic " + base64.encode(String(CLIENT) + ":" + String(CLIENT_SECRET))
-
-    //   http.end();
 
     // }
 
@@ -152,20 +190,37 @@ class SpotifyConn {
 
 };
 
+PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 5, 40, COLOR_RGB565_WHITE);
+SpotifyConn spotifyConn;
 ESP8266WebServer server(80);
 void webServerHandleRoot() {
-  Serial.println("Serving");
-  server.send(200, "text/html", "Im a webserver\r\n");
+  char webPage[1024];
+  sprintf(webPage, loginPage, CLIENT, "192.168.1.15");
+  Serial.println(webPage);
+  server.send(200, "text/html", webPage);
 }
 
-PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 5, 40, COLOR_RGB565_WHITE);
-SpotifyConn spotifyConn = SpotifyConn();
+void webServerHandleCallback() {
+  if (server.arg("code") != "") {
+    if (spotifyConn.getAuth(server.arg("code"))) {
+      server.send(200, "text/html", "success!!\r\n");
+    
+    } else {
+      Serial.println("auth fail");
+    }
+
+  } else {
+    Serial.println("No code arg.");
+  }
+}
+
 int play = 0;
 void setup() {
   Serial.begin(115200);
   screen.begin();
   screen.fillScreen(COLOR_RGB565_BLACK);
   server.on("/", webServerHandleRoot);
+  server.on("/callback", webServerHandleCallback);
   server.begin();
   spotifyConn.connect(SSID, PASSPHRASE);
 }
