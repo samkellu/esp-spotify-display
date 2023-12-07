@@ -5,16 +5,16 @@
 #include <ESP8266WiFi.h> 
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
-#include <WiFiClientSecure.h>
+// #include <WiFiClientSecure.h>
 
 #include <ArduinoJson.h>
 #include <base64.h>
 
-#define POT A0
-#define TFT_CS  D6
-#define TFT_RST D5
-#define TFT_DC  D4
-#define TFT_WIDTH 240
+#define POT        A0
+#define TFT_CS     5  // D6
+#define TFT_RST    2  // D5
+#define TFT_DC     15 // D4
+#define TFT_WIDTH  240
 #define TFT_HEIGHT 320
 
 const String ENDPOINT = "https://api.spotify.com/v1/me";
@@ -123,7 +123,6 @@ class PlaybackBar {
 
 class SpotifyConn {
   private:
-    WiFiClientSecure client;
     HTTPClient httpsClient;
     String accessToken;
     String refreshToken;
@@ -133,7 +132,6 @@ class SpotifyConn {
 
     SpotifyConn() {
       // Ignore ssl
-      client.setInsecure();
     }
     // Connects to the network specified in credentials.h
     void connect(const char* ssid, const char* passphrase) {
@@ -148,33 +146,71 @@ class SpotifyConn {
 
     bool getAuth(String code) {
 
-      bool ret = false;
-      httpsClient.begin(client, "https://accounts.spotify.com/api/token");
-      // String body = "grant_type=authorization_code&code=" + code + "&redirect_uri='http://192.168.1.15/callback'";
-      // String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
-      // http.addHeader("Authorization", auth);
-      char body[512];
-      const char* base = "grant_type=client_credentials&client_id=%s&client_secret=%s";
-      sprintf(body, base, CLIENT, CLIENT_SECRET);
-      httpsClient.addHeader("Content-Type", "application/x-www-form-urlencoded");
-
-      Serial.println(body);
-      int status = httpsClient.POST(body);
-      if (status == HTTP_CODE_OK) {
-        String resp = httpsClient.getString();
-        DynamicJsonDocument jsonDocument(1024);
-
-        accessToken = jsonDocument["access_token"].as<String>();
-        // refreshToken = jsonDocument["refresh_token"].as<String>();
-        expiry = jsonDocument["expires_in"];
-        ret = true;
-
-      } else {
-        Serial.printf("Error getting response from spotify auth. %d\n", status);
+      BearSSL::WiFiClientSecure client;
+      client.setInsecure();
+      const char* host = "accounts.spotify.com";
+      const int port = 443;
+      String url = "/api/token";
+      if (!client.connect(host, port)) {
+        Serial.println("Connection failed!");
+        return false;
       }
 
-      httpsClient.end();
-      return ret;
+      bool ret = false;
+      // const char* fingerprint = "E7:47:B5:45:71:A9:B4:47:EA:AD:21:D7:7C:A2:8D:B4:89:1C:BF:75";
+      // httpsClient.begin("https://accounts.spotify.com/api/token", fingerprint);
+      String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
+      String body = "grant_type=authorization_code&code=" + code + "&redirect_uri=http://192.168.1.15/callback";
+      String req = String("POST ") + url + " HTTP/1.1\r\n" +
+                      "Host: " + host + "\r\n" +
+                      "Content-Length: " + String(body.length()) + "\r\n" +
+                      "Content-Type: application/x-www-form-urlencoded\r\n" +
+                      "Authorization: " + auth + "\r\n" +
+                      "Connection: close\r\n\r\n" + 
+                      body;
+
+      Serial.println(req);
+      client.print(req);
+
+      while (client.connected()) {
+        String line = client.readStringUntil('\0');
+        Serial.println(line);
+      }
+
+      return false;
+
+      // String resp = client;
+      // // Serial.printf("%s\n", resp);
+      // DynamicJsonDocument jsonDocument(1024);
+
+      // accessToken = jsonDocument["access_token"].as<String>();
+      // // refreshToken = jsonDocument["refresh_token"].as<String>();
+      // expiry = jsonDocument["expires_in"];
+      // ret = true;
+
+
+
+
+      // httpsClient.addHeader("Authorization", auth);
+      // httpsClient.addHeader("content-type", "application/x-www-form-urlencoded");
+
+      // Serial.println(body);
+      // int status = httpsClient.POST(body);
+      // if (status == HTTP_CODE_OK) {
+      //   String resp = httpsClient.getString();
+      //   // Serial.printf("%s\n", resp);
+      //   DynamicJsonDocument jsonDocument(1024);
+
+      //   accessToken = jsonDocument["access_token"].as<String>();
+      //   // refreshToken = jsonDocument["refresh_token"].as<String>();
+      //   expiry = jsonDocument["expires_in"];
+      //   ret = true;
+
+      // } else {
+      //   Serial.printf("Error getting response from spotify auth. %d\n", status);
+      // }
+
+      // httpsClient.end();
     }
 
     // void refreshAuth() {
