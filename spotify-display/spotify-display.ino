@@ -157,11 +157,9 @@ class SpotifyConn {
       }
 
       bool ret = false;
-      // const char* fingerprint = "E7:47:B5:45:71:A9:B4:47:EA:AD:21:D7:7C:A2:8D:B4:89:1C:BF:75";
-      // httpsClient.begin("https://accounts.spotify.com/api/token", fingerprint);
       String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
       String body = "grant_type=authorization_code&code=" + code + "&redirect_uri=http://192.168.1.15/callback";
-      String req = String("POST ") + url + " HTTP/1.1\r\n" +
+      String req = String("POST ") + url + " HTTP/1.0\r\n" +
                       "Host: " + host + "\r\n" +
                       "Content-Length: " + String(body.length()) + "\r\n" +
                       "Content-Type: application/x-www-form-urlencoded\r\n" +
@@ -172,17 +170,24 @@ class SpotifyConn {
       Serial.println(req);
       client.print(req);
 
-      while (client.connected()) {
-        String line = client.readStringUntil('\0');
-        Serial.println(line);
-      }
-
-      return false;
+      String ln = client.readStringUntil('{');
 
       // String resp = client;
       // // Serial.printf("%s\n", resp);
-      // DynamicJsonDocument jsonDocument(1024);
+      DynamicJsonDocument doc(1024);
+      String out = "{" + client.readStringUntil('\r');
+      Serial.println(out + " WOOW");
+      DeserializationError err = deserializeJson(doc, out);
 
+      if (err) {
+        Serial.println("Deserialisation failed...");
+        Serial.println(err.f_str());
+        return false;
+      }
+      Serial.println((JsonObject) doc[0]);
+      Serial.println((JsonObject) doc[1]);
+      Serial.println((JsonObject) doc[2]);
+      return true;
       // accessToken = jsonDocument["access_token"].as<String>();
       // // refreshToken = jsonDocument["refresh_token"].as<String>();
       // expiry = jsonDocument["expires_in"];
