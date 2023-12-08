@@ -1,11 +1,9 @@
-
 #include "DFRobot_GDL.h"
 #include "credentials.h"
 #include "webpage.h"
 #include <ESP8266WiFi.h> 
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
-// #include <WiFiClientSecure.h>
 
 #include <ArduinoJson.h>
 #include <base64.h>
@@ -123,16 +121,17 @@ class PlaybackBar {
 
 class SpotifyConn {
   private:
+      BearSSL::WiFiClientSecure client;
     HTTPClient httpsClient;
     String accessToken;
     String refreshToken;
     int expiry;
 
   public:
-
     SpotifyConn() {
-      // Ignore ssl
+      client.setInsecure();
     }
+
     // Connects to the network specified in credentials.h
     void connect(const char* ssid, const char* passphrase) {
       Serial.printf("Attempting connection to %s...\n", ssid);
@@ -145,9 +144,6 @@ class SpotifyConn {
     }
 
     bool getAuth(String code) {
-
-      BearSSL::WiFiClientSecure client;
-      client.setInsecure();
 
       const char* host = "accounts.spotify.com";
       const int   port = 443;
@@ -198,18 +194,17 @@ class SpotifyConn {
 
     // }
 
-    bool getNowPlaying() {
+    DynamicJsonDocument makeRequest(String url) {
 
-      BearSSL::WiFiClientSecure client;
-      client.setInsecure();
+      DynamicJsonDocument doc(2048);
 
       const char* host = "api.spotify.com";
       const int   port = 443;
-      String      url  = "/v1/me/player/currently-playing";
 
       if (!client.connect(host, port)) {
         Serial.println("Connection failed!");
-        return false;
+        doc.clear();
+        return doc;
       }
 
       String auth = "Bearer " + accessToken;
@@ -222,30 +217,30 @@ class SpotifyConn {
 
       String ln = client.readStringUntil('{');
 
-      DynamicJsonDocument doc(1024);
       String json = "{" + client.readStringUntil('\r');
       Serial.println(json);
-      return true;
 
       DeserializationError err = deserializeJson(doc, json);
 
       if (err) {
         Serial.printf("Deserialisation failed for string: %s\n", json);
         Serial.println(err.f_str());
-        return false;
+        doc.clear();
       }
 
-      // TODO check if these keys are present first
-      accessToken = doc["access_token"].as<String>();
-      refreshToken = doc["refresh_token"].as<String>();
-      expiry = doc["expires_in"];
-
-      Serial.println(accessToken);
-      Serial.println(refreshToken);
-      Serial.println(expiry);
-      return true;
+      return doc;
     }
 
+    bool getNowPlaying() {
+
+      DynamicJsonDocument doc = makeRequest("/v1/me/player/currently-playing");
+
+      if (doc.isNull()) {
+        return false;
+      }
+      
+      return true;
+    }
 };
 
 PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 5, 40, COLOR_RGB565_WHITE);
@@ -262,12 +257,13 @@ void webServerHandleCallback() {
   if (server.arg("code") != "") {
     if (spotifyConn.getAuth(server.arg("code"))) {
       Serial.println("Successfully got access tokens!");
-      if (spotifyConn.getNowPlaying()) {
-        server.send(200, "text/html", "success!!\r\n");
-      
-      } else {
-        server.send(200, "text/html", "no bueno!!\r\n");
+
+      DynamicJsonDocument doc = spotifyConn.makeRequest("/v1/me/player/currently-playing");
+
+      if (doc.isNull()) {
+        server.send(200, "text/html", "No bueno\r\n");
       }
+      server.send(200, "text/html", doc["item"]["name"].as<String>() + "\r\n");
     
     } else {
       Serial.println("auth fail");
