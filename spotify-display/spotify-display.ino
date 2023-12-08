@@ -148,74 +148,49 @@ class SpotifyConn {
 
       BearSSL::WiFiClientSecure client;
       client.setInsecure();
+
       const char* host = "accounts.spotify.com";
-      const int port = 443;
-      String url = "/api/token";
+      const int   port = 443;
+      String      url  = "/api/token";
+
       if (!client.connect(host, port)) {
         Serial.println("Connection failed!");
         return false;
       }
 
-      bool ret = false;
       String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
       String body = "grant_type=authorization_code&code=" + code + "&redirect_uri=http://192.168.1.15/callback";
-      String req = String("POST ") + url + " HTTP/1.0\r\n" +
-                      "Host: " + host + "\r\n" +
-                      "Content-Length: " + String(body.length()) + "\r\n" +
-                      "Content-Type: application/x-www-form-urlencoded\r\n" +
-                      "Authorization: " + auth + "\r\n" +
-                      "Connection: close\r\n\r\n" + 
-                      body;
+      String req  = "POST " + url + " HTTP/1.0\r\n" +
+                    "Host: " + host + "\r\n" +
+                    "Content-Length: " + String(body.length()) + "\r\n" +
+                    "Content-Type: application/x-www-form-urlencoded\r\n" +
+                    "Authorization: " + auth + "\r\n" +
+                    "Connection: close\r\n\r\n" + 
+                    body;
 
-      Serial.println(req);
       client.print(req);
 
       String ln = client.readStringUntil('{');
 
-      // String resp = client;
-      // // Serial.printf("%s\n", resp);
       DynamicJsonDocument doc(1024);
-      String out = "{" + client.readStringUntil('\r');
-      Serial.println(out + " WOOW");
-      DeserializationError err = deserializeJson(doc, out);
+      String json = "{" + client.readStringUntil('\r');
+      DeserializationError err = deserializeJson(doc, json);
 
       if (err) {
-        Serial.println("Deserialisation failed...");
+        Serial.printf("Deserialisation failed for string: %s\n", json);
         Serial.println(err.f_str());
         return false;
       }
-      Serial.println((JsonObject) doc[0]);
-      Serial.println((JsonObject) doc[1]);
-      Serial.println((JsonObject) doc[2]);
+
+      // TODO check if these keys are present first
+      accessToken = doc["access_token"].as<String>();
+      refreshToken = doc["refresh_token"].as<String>();
+      expiry = doc["expires_in"];
+
+      Serial.println(accessToken);
+      Serial.println(refreshToken);
+      Serial.println(expiry);
       return true;
-      // accessToken = jsonDocument["access_token"].as<String>();
-      // // refreshToken = jsonDocument["refresh_token"].as<String>();
-      // expiry = jsonDocument["expires_in"];
-      // ret = true;
-
-
-
-
-      // httpsClient.addHeader("Authorization", auth);
-      // httpsClient.addHeader("content-type", "application/x-www-form-urlencoded");
-
-      // Serial.println(body);
-      // int status = httpsClient.POST(body);
-      // if (status == HTTP_CODE_OK) {
-      //   String resp = httpsClient.getString();
-      //   // Serial.printf("%s\n", resp);
-      //   DynamicJsonDocument jsonDocument(1024);
-
-      //   accessToken = jsonDocument["access_token"].as<String>();
-      //   // refreshToken = jsonDocument["refresh_token"].as<String>();
-      //   expiry = jsonDocument["expires_in"];
-      //   ret = true;
-
-      // } else {
-      //   Serial.printf("Error getting response from spotify auth. %d\n", status);
-      // }
-
-      // httpsClient.end();
     }
 
     // void refreshAuth() {
@@ -223,11 +198,53 @@ class SpotifyConn {
 
     // }
 
-    // void getNowPlaying() {
+    bool getNowPlaying() {
 
-    //   String path = ENDPOINT + "/player";
-    //   http.begin(client, )
-    // }
+      BearSSL::WiFiClientSecure client;
+      client.setInsecure();
+
+      const char* host = "api.spotify.com";
+      const int   port = 443;
+      String      url  = "/v1/me/player/currently-playing";
+
+      if (!client.connect(host, port)) {
+        Serial.println("Connection failed!");
+        return false;
+      }
+
+      String auth = "Bearer " + accessToken;
+      String req  = "GET " + url + " HTTP/1.0\r\n" +
+                    "Host: " + host + "\r\n" +
+                    "Authorization: " + auth + "\r\n" +
+                    "Connection: close\r\n\r\n"; 
+
+      client.print(req);
+
+      String ln = client.readStringUntil('{');
+
+      DynamicJsonDocument doc(1024);
+      String json = "{" + client.readStringUntil('\r');
+      Serial.println(json);
+      return true;
+
+      DeserializationError err = deserializeJson(doc, json);
+
+      if (err) {
+        Serial.printf("Deserialisation failed for string: %s\n", json);
+        Serial.println(err.f_str());
+        return false;
+      }
+
+      // TODO check if these keys are present first
+      accessToken = doc["access_token"].as<String>();
+      refreshToken = doc["refresh_token"].as<String>();
+      expiry = doc["expires_in"];
+
+      Serial.println(accessToken);
+      Serial.println(refreshToken);
+      Serial.println(expiry);
+      return true;
+    }
 
 };
 
@@ -244,7 +261,13 @@ void webServerHandleRoot() {
 void webServerHandleCallback() {
   if (server.arg("code") != "") {
     if (spotifyConn.getAuth(server.arg("code"))) {
-      server.send(200, "text/html", "success!!\r\n");
+      Serial.println("Successfully got access tokens!");
+      if (spotifyConn.getNowPlaying()) {
+        server.send(200, "text/html", "success!!\r\n");
+      
+      } else {
+        server.send(200, "text/html", "no bueno!!\r\n");
+      }
     
     } else {
       Serial.println("auth fail");
