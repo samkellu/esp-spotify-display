@@ -165,8 +165,7 @@ class SpotifyConn {
                     body;
 
       client.print(req);
-
-      String ln = client.readStringUntil('{');
+      client.readStringUntil('{');
 
       DynamicJsonDocument doc(1024);
       String json = "{" + client.readStringUntil('\r');
@@ -194,17 +193,15 @@ class SpotifyConn {
 
     // }
 
-    DynamicJsonDocument makeRequest(String url) {
+    SongInfo makeRequest(String url) {
 
-      DynamicJsonDocument doc(2048);
-
+      SongInfo song = {.err = true, .name = "", .artist = ""};
       const char* host = "api.spotify.com";
       const int   port = 443;
 
       if (!client.connect(host, port)) {
         Serial.println("Connection failed!");
-        doc.clear();
-        return doc;
+        return song;
       }
 
       String auth = "Bearer " + accessToken;
@@ -217,30 +214,50 @@ class SpotifyConn {
 
       String ln = client.readStringUntil('{');
 
-      String json = "{" + client.readStringUntil('\r');
-      Serial.println(json);
+      int start = ln.indexOf(' ');
+      int end = ln.indexOf(' ', start + 1);
+      String status = ln.substring(start, end);
 
-      DeserializationError err = deserializeJson(doc, json);
+      if (status != 200) {
+        Serial.printf("An error occurred: HTTP %s\r\n", status);
+        return song;
+      }
+
+      String json = "{" + client.readStringUntil('\r');
+      StaticJsonDocument<1024> doc;
+      StaticJsonDocument<256> filter;
+      filter["progress_ms"] = true;
+      JsonObject fItem = filter.createNestedObject("item");
+      fItem["name"] = true;
+      fItem["duration_ms"] = true;
+      fItem["artists"][0]["name"] = true;
+      DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
 
       if (err) {
         Serial.printf("Deserialisation failed for string: %s\n", json);
         Serial.println(err.f_str());
-        doc.clear();
+        return song;
       }
 
-      return doc;
+      song.err = false;
+      JsonObject item = doc["item"];
+      song.name = (String) item["name"];
+      song.artist = (String) item["artists"][0]["name"];
+      Serial.println(song.artist);
+      Serial.println(song.name);
+      return song;
     }
 
-    bool getNowPlaying() {
+    // bool getNowPlaying() {
 
-      DynamicJsonDocument doc = makeRequest("/v1/me/player/currently-playing");
+    //   StaticJsonDocument doc = makeRequest("/v1/me/player/currently-playing");
 
-      if (doc.isNull()) {
-        return false;
-      }
+    //   if (doc.isNull()) {
+    //     return false;
+    //   }
       
-      return true;
-    }
+    //   return true;
+    // }
 };
 
 PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 5, 40, COLOR_RGB565_WHITE);
@@ -258,12 +275,12 @@ void webServerHandleCallback() {
     if (spotifyConn.getAuth(server.arg("code"))) {
       Serial.println("Successfully got access tokens!");
 
-      DynamicJsonDocument doc = spotifyConn.makeRequest("/v1/me/player/currently-playing");
+      SongInfo song = spotifyConn.makeRequest("/v1/me/player/currently-playing");
 
-      if (doc.isNull()) {
+      if (song.err) {
         server.send(200, "text/html", "No bueno\r\n");
       }
-      server.send(200, "text/html", doc["item"]["name"].as<String>() + "\r\n");
+      server.send(200, "text/html", song.name + "\r\n");
     
     } else {
       Serial.println("auth fail");
