@@ -51,8 +51,8 @@ class PlaybackBar {
       this->closingWave = (int*) malloc(sizeof(int) * numSamples);
 
       int idx = 0;
-      for (float i = 0; i < 2 * PI && idx < numSamples; i += 2*PI / (float)numSamples) {
-        this->wave[idx] = sin(i) * amplitude;
+      for (float i = 0; i < 2*PI && idx < numSamples; i += 2*PI / (float)numSamples) {
+        this->wave[idx] = round(sin(i) * amplitude);
         this->closingWave[idx] = this->wave[idx++]/2;
       }
     }
@@ -224,6 +224,7 @@ class SpotifyConn {
       }
 
       String json = "{" + client.readStringUntil('\r');
+      // Serial.println(json);
       StaticJsonDocument<1024> doc;
       StaticJsonDocument<256> filter;
       filter["progress_ms"] = true;
@@ -232,6 +233,7 @@ class SpotifyConn {
       fItem["duration_ms"] = true;
       fItem["artists"][0]["name"] = true;
       fItem["album"]["name"] = true;
+      fItem["album"]["images"][0]["url"] = true;
       DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
 
       if (err) {
@@ -246,12 +248,45 @@ class SpotifyConn {
       song.artistName = (String) item["artists"][0]["name"];
       song.albumName = (String) item["album"]["name"];
       song.durationMs = (int) item["duration_ms"];
-
+      song.imgUrl = (String) item["album"]["images"][0]["url"];
+      Serial.println(song.imgUrl);
       return true;
     }
+
+  bool getAlbumArt() {
+    const char*  host = "i.scdn.co";
+    const int    port = 443;
+    const String url = song.imgUrl.substring(17);
+    Serial.println(song.imgUrl);
+    Serial.println(url);
+
+    if (!client.connect(host, port)) {
+      Serial.println("Connection failed!");
+      return false;
+    }
+
+    String req  = "GET " + url + " HTTP/1.0\r\n" +
+                  "Connection: close\r\n\r\n"; 
+
+    client.print(req);
+    String ln = client.readStringUntil('{');
+    Serial.println(ln);
+
+    int start = ln.indexOf(' ');
+    int end = ln.indexOf(' ', start + 1);
+    String status = ln.substring(start, end);
+
+    if (!strcmp(status.c_str(), "200")) {
+      Serial.printf("An error occurred: HTTP %s\r\n", status);
+      return false;
+    }
+
+    return true;
+
+  }
 };
 
-PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 5, 64, COLOR_RGB565_WHITE);
+PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 6, 40, COLOR_RGB565_WHITE);
 SpotifyConn spotifyConn;
 ESP8266WebServer server(80);
 
@@ -311,6 +346,9 @@ void loop(){
           screen.println(spotifyConn.song.songName);
           screen.println(spotifyConn.song.artistName);
           screen.println(spotifyConn.song.albumName);
+
+          // get image
+          spotifyConn.getAlbumArt();
         }
       
       } else {
