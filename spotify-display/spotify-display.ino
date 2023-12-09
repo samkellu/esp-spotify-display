@@ -8,12 +8,13 @@
 #include <ArduinoJson.h>
 #include <base64.h>
 
-#define POT        A0
-#define TFT_CS     5  // D6
-#define TFT_RST    2  // D5
-#define TFT_DC     15 // D4
-#define TFT_WIDTH  240
-#define TFT_HEIGHT 320
+#define POT          A0
+#define TFT_CS       5  // D6
+#define TFT_RST      2  // D5
+#define TFT_DC       15 // D4
+#define TFT_WIDTH    240
+#define TFT_HEIGHT   320
+#define REQUEST_RATE 20000 // ms
 
 const String ENDPOINT = "https://api.spotify.com/v1/me";
 
@@ -25,34 +26,32 @@ class PlaybackBar {
     bool playStateFlag = 0;
     uint16_t time = 0;
     uint16_t color;
-    int x;
-    int y;
-    int width;
-    int height;
+    int x, y;
+    int width, height;
     int amplitude;
     int* wave;
     int* closingWave;
     int numSamples;
     int prevProgressX = -1;
-    int deltaT = 2;
+    uint32_t prevTime = 0;
 
   public:
     int progress = 70;
-    int trackLength = 100;
+    int duration = 100;
 
     PlaybackBar(int x, int y, int width, int height, int amplitude, int numSamples, uint16_t color) {
-      this->x = x;
-      this->y = y;
-      this->width = width;
-      this->height = height;
-      this->color = color;
-      this->amplitude = amplitude;
-      this->numSamples = numSamples;
-      this->wave = (int*)malloc(sizeof(int) * numSamples);
-      this->closingWave = (int*)malloc(sizeof(int) * numSamples);
+      this->x           = x;
+      this->y           = y;
+      this->width       = width;
+      this->height      = height;
+      this->color       = color;
+      this->amplitude   = amplitude;
+      this->numSamples  = numSamples;
+      this->wave        = (int*) malloc(sizeof(int) * numSamples);
+      this->closingWave = (int*) malloc(sizeof(int) * numSamples);
 
       int idx = 0;
-      for (float i = 0; i < 2 * PI; i += 2*PI / (float)numSamples) {
+      for (float i = 0; i < 2 * PI && idx < numSamples; i += 2*PI / (float)numSamples) {
         this->wave[idx] = sin(i) * amplitude;
         this->closingWave[idx] = this->wave[idx++]/2;
       }
@@ -63,18 +62,19 @@ class PlaybackBar {
         return;
       }
 
-      int bound = x + width * (progress/(float)trackLength);
+      uint32_t curTime = millis() / 100;
+      int bound = x + width * (progress/(float)duration);
       // Stop playing
       if (!playStateFlag && playing) {
 
         // Animate wave closing back to straight line when music is paused
         for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y + wave[(time + i - deltaT)%numSamples], COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y + closingWave[(time + i - deltaT)%numSamples], color);
+          screen.drawPixel(i, y + wave[(curTime + i)%numSamples], COLOR_RGB565_BLACK);
+          screen.drawPixel(i, y + closingWave[(curTime + i)%numSamples], color);
         }
         delay(30);
         for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y + closingWave[(time + i - deltaT)%numSamples], COLOR_RGB565_BLACK);
+          screen.drawPixel(i, y + closingWave[(curTime + i)%numSamples], COLOR_RGB565_BLACK);
           screen.drawPixel(i, y, color);
         }
         screen.drawFastHLine(x, y, width, color);
@@ -87,12 +87,12 @@ class PlaybackBar {
         // Animate wave opening to full height when music starts playing again
         for (int i = x; i < bound; i++) {
           screen.drawPixel(i, y, COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y + closingWave[(time + i)%numSamples], color);
+          screen.drawPixel(i, y + closingWave[(curTime + i)%numSamples], color);
         }
         delay(40);
         for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y + closingWave[(time + i)%numSamples], COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y + wave[(time + i)%numSamples], color);
+          screen.drawPixel(i, y + closingWave[(curTime + i)%numSamples], COLOR_RGB565_BLACK);
+          screen.drawPixel(i, y + wave[(curTime + i)%numSamples], color);
         }
         playing = 1;
       }
@@ -107,10 +107,10 @@ class PlaybackBar {
 
       // Draw wave
       for (int i = x; i < bound; i++) {
-        screen.drawPixel(i, y + wave[(time + i - deltaT)%numSamples], COLOR_RGB565_BLACK);
-        screen.drawPixel(i, y + wave[(time + i)%numSamples], color);
+        screen.drawPixel(i, y + wave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
+        screen.drawPixel(i, y + wave[(curTime + i)%numSamples], color);
       }
-      time += deltaT;
+      prevTime = curTime;
     }
 
     void setPlayState(bool state) {
@@ -121,15 +121,19 @@ class PlaybackBar {
 
 class SpotifyConn {
   private:
-      BearSSL::WiFiClientSecure client;
+    BearSSL::WiFiClientSecure client;
     HTTPClient httpsClient;
     String accessToken;
     String refreshToken;
     int expiry;
 
   public:
+    SongInfo song;
+    bool accessTokenSet;
+
     SpotifyConn() {
       client.setInsecure();
+      accessTokenSet = false;
     }
 
     // Connects to the network specified in credentials.h
@@ -182,26 +186,23 @@ class SpotifyConn {
       refreshToken = doc["refresh_token"].as<String>();
       expiry = doc["expires_in"];
 
-      Serial.println(accessToken);
-      Serial.println(refreshToken);
-      Serial.println(expiry);
+      accessTokenSet = true;
       return true;
     }
 
-    // void refreshAuth() {
+    bool getCurrentlyPlaying() {
 
+      if (!accessTokenSet) {
+        return false;
+      }
 
-    // }
-
-    SongInfo makeRequest(String url) {
-
-      SongInfo song = {.err = true, .name = "", .artist = ""};
-      const char* host = "api.spotify.com";
-      const int   port = 443;
+      const String url  = "/v1/me/player/currently-playing";
+      const char*  host = "api.spotify.com";
+      const int    port = 443;
 
       if (!client.connect(host, port)) {
         Serial.println("Connection failed!");
-        return song;
+        return false;
       }
 
       String auth = "Bearer " + accessToken;
@@ -211,16 +212,15 @@ class SpotifyConn {
                     "Connection: close\r\n\r\n"; 
 
       client.print(req);
-
       String ln = client.readStringUntil('{');
 
       int start = ln.indexOf(' ');
       int end = ln.indexOf(' ', start + 1);
       String status = ln.substring(start, end);
 
-      if (status != 200) {
+      if (!strcmp(status.c_str(), "200")) {
         Serial.printf("An error occurred: HTTP %s\r\n", status);
-        return song;
+        return false;
       }
 
       String json = "{" + client.readStringUntil('\r');
@@ -231,42 +231,33 @@ class SpotifyConn {
       fItem["name"] = true;
       fItem["duration_ms"] = true;
       fItem["artists"][0]["name"] = true;
+      fItem["album"]["name"] = true;
       DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
 
       if (err) {
         Serial.printf("Deserialisation failed for string: %s\n", json);
         Serial.println(err.f_str());
-        return song;
+        return false;
       }
 
-      song.err = false;
+      song.progressMs = (int) doc["progress_ms"];
       JsonObject item = doc["item"];
-      song.name = (String) item["name"];
-      song.artist = (String) item["artists"][0]["name"];
-      Serial.println(song.artist);
-      Serial.println(song.name);
-      return song;
+      song.songName = (String) item["name"];
+      song.artistName = (String) item["artists"][0]["name"];
+      song.albumName = (String) item["album"]["name"];
+      song.durationMs = (int) item["duration_ms"];
+
+      return true;
     }
-
-    // bool getNowPlaying() {
-
-    //   StaticJsonDocument doc = makeRequest("/v1/me/player/currently-playing");
-
-    //   if (doc.isNull()) {
-    //     return false;
-    //   }
-      
-    //   return true;
-    // }
 };
 
-PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 5, 40, COLOR_RGB565_WHITE);
+PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 5, 64, COLOR_RGB565_WHITE);
 SpotifyConn spotifyConn;
 ESP8266WebServer server(80);
+
 void webServerHandleRoot() {
   char webPage[1024];
   sprintf(webPage, loginPage, CLIENT, "192.168.1.15");
-  Serial.println(webPage);
   server.send(200, "text/html", webPage);
 }
 
@@ -274,48 +265,68 @@ void webServerHandleCallback() {
   if (server.arg("code") != "") {
     if (spotifyConn.getAuth(server.arg("code"))) {
       Serial.println("Successfully got access tokens!");
-
-      SongInfo song = spotifyConn.makeRequest("/v1/me/player/currently-playing");
-
-      if (song.err) {
-        server.send(200, "text/html", "No bueno\r\n");
-      }
-      server.send(200, "text/html", song.name + "\r\n");
+      server.send(200, "text/html", "Login complete! you may close this tab.\r\n");
     
     } else {
-      Serial.println("auth fail");
+      server.send(200, "text/html", "Authentication failed... Please try again :(\r\n");
     }
 
   } else {
-    Serial.println("No code arg.");
+    Serial.println("An error occurred. Server provided no code arg.");
   }
 }
 
 int play = 0;
+uint32_t lastRequest;
 void setup() {
   Serial.begin(115200);
   screen.begin();
   screen.fillScreen(COLOR_RGB565_BLACK);
+  screen.setTextSize(3);
   server.on("/", webServerHandleRoot);
   server.on("/callback", webServerHandleCallback);
   server.begin();
   spotifyConn.connect(SSID, PASSPHRASE);
+  lastRequest = 0;
 }
 
 void loop(){
   server.handleClient();
-  delay(50);
-  screen.print(WiFi.localIP());
-  screen.setCursor(0,0);
-  playbackBar.draw();
-  if (play++%50 < 30) {
-    playbackBar.setPlayState(1);
-    playbackBar.progress++;
-    if (playbackBar.progress >= playbackBar.trackLength) {
-      playbackBar.progress = 0;
-      screen.fillScreen(COLOR_RGB565_BLACK);
+  delay(40);
+
+  if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
+    if (spotifyConn.accessTokenSet) {
+      if (spotifyConn.getCurrentlyPlaying()) {
+        Serial.println("Requested");
+        int prevProgress = playbackBar.progress;
+        int prevDuration = playbackBar.duration;
+        playbackBar.progress = spotifyConn.song.progressMs;
+        playbackBar.duration = spotifyConn.song.durationMs;
+        playbackBar.setPlayState(PLAYING);
+
+        // Base off song id instead
+        if (playbackBar.progress < prevProgress || playbackBar.duration != prevDuration) {
+          screen.fillScreen(COLOR_RGB565_BLACK);
+          screen.setCursor(0,0);
+          screen.println(spotifyConn.song.songName);
+          screen.println(spotifyConn.song.artistName);
+          screen.println(spotifyConn.song.albumName);
+        }
+      
+      } else {
+        Serial.println("Failed to fetch...");
+      }
+
+    } else {
+      screen.setCursor(0,0);
+      screen.println(WiFi.localIP());
     }
+    lastRequest = millis();
+
   } else {
-    playbackBar.setPlayState(0);
+    int interpolatedTime = (int) (millis() - lastRequest + spotifyConn.song.progressMs);
+    playbackBar.progress = min(interpolatedTime, spotifyConn.song.durationMs);
   }
+
+  playbackBar.draw();
 }
