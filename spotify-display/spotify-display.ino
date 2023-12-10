@@ -4,6 +4,7 @@
 #include <ESP8266WiFi.h> 
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
+#include <TJpg_Decoder.h>
 
 #include <ArduinoJson.h>
 #include <base64.h>
@@ -127,6 +128,15 @@ class SpotifyConn {
     String refreshToken;
     int expiry;
 
+    int getContentLength() {
+      if (!client.find("Content-Length:")) {
+        return -1;
+      }
+
+      int contentLength = client.parseInt();
+      return contentLength;
+    }
+
   public:
     SongInfo song;
     bool accessTokenSet;
@@ -134,6 +144,7 @@ class SpotifyConn {
     SpotifyConn() {
       client.setInsecure();
       accessTokenSet = false;
+      song.imgAlloc = false;
     }
 
     // Connects to the network specified in credentials.h
@@ -213,7 +224,7 @@ class SpotifyConn {
 
       client.print(req);
       String ln = client.readStringUntil('{');
-
+      Serial.println(ln);
       int start = ln.indexOf(' ');
       int end = ln.indexOf(' ', start + 1);
       String status = ln.substring(start, end);
@@ -226,14 +237,19 @@ class SpotifyConn {
       String json = "{" + client.readStringUntil('\r');
       // Serial.println(json);
       StaticJsonDocument<1024> doc;
-      StaticJsonDocument<256> filter;
+      StaticJsonDocument<512> filter;
+
       filter["progress_ms"] = true;
-      JsonObject fItem = filter.createNestedObject("item");
-      fItem["name"] = true;
-      fItem["duration_ms"] = true;
-      fItem["artists"][0]["name"] = true;
-      fItem["album"]["name"] = true;
-      fItem["album"]["images"][0]["url"] = true;
+      JsonObject filter_item = filter.createNestedObject("item");
+      filter_item["name"] = true;
+      filter_item["duration_ms"] = true;
+      filter_item["artists"][0]["name"] = true;
+      JsonObject filter_item_album = filter_item.createNestedObject("album");
+      filter_item_album["name"] = true;
+      JsonObject filter_item_album_images = filter_item_album["images"].createNestedObject();
+      filter_item_album_images["url"] = true;
+      filter_item_album_images["width"] = true;
+      filter_item_album_images["height"] = true;
       DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
 
       if (err) {
@@ -242,49 +258,114 @@ class SpotifyConn {
         return false;
       }
 
-      song.progressMs = (int) doc["progress_ms"];
+      #ifdef DEBUG
+        serializeJsonPretty(doc, Serial);
+      #endif
+
+      song.progressMs = doc["progress_ms"].as<int>();
       JsonObject item = doc["item"];
-      song.songName = (String) item["name"];
-      song.artistName = (String) item["artists"][0]["name"];
-      song.albumName = (String) item["album"]["name"];
-      song.durationMs = (int) item["duration_ms"];
-      song.imgUrl = (String) item["album"]["images"][0]["url"];
-      Serial.println(song.imgUrl);
+      song.songName = item["name"].as<String>();
+      song.albumName = item["album"]["name"].as<String>();
+      song.artistName = item["artists"][0]["name"].as<String>();
+      song.durationMs = item["duration_ms"].as<int>();
+
+      JsonArray images = item["album"]["images"];
+      Serial.println(images.size());
+
+      for (int i = 0; i < images.size(); i++) {
+        int height = images[i]["height"].as<int>();
+        int width = images[i]["width"].as<int>();
+
+        if (height <= 200 && width <= 200) {
+          Serial.printf("%d x %d\n", width, height);
+          song.height = height;
+          song.width = width;
+          song.imgUrl = images[i]["url"].as<String>();
+          break;
+        }
+      }
+
       return true;
     }
 
-  bool getAlbumArt() {
-    const char*  host = "i.scdn.co";
-    const int    port = 443;
-    const String url = song.imgUrl.substring(17);
-    Serial.println(song.imgUrl);
-    Serial.println(url);
+    bool getAlbumArt() {
+      const char*  host = "i.scdn.co";
+      const int    port = 443;
+      const String url = song.imgUrl.substring(17);
 
-    if (!client.connect(host, port)) {
-      Serial.println("Connection failed!");
-      return false;
+      if (!client.connect(host, port)) {
+        Serial.println("Connection failed!");
+        return false;
+      }
+
+      String req  = "GET " + url + " HTTP/1.0\r\n" +
+                    "Host: " + host + "\r\n";
+
+      if (client.println(req) == 0) {
+        Serial.println("Failed to send request...");
+        return false;
+      }
+
+      String ln = client.readStringUntil('\r');
+
+      int start = ln.indexOf(' ');
+      int end = ln.indexOf(' ', start + 1);
+      String status = ln.substring(start, end);
+
+      if (!strcmp(status.c_str(), "200")) {
+        Serial.printf("An error occurred: HTTP %s\r\n", status);
+        return false;
+      }
+
+      int numBytes = getContentLength();
+      Serial.println(numBytes);
+      if (!client.find("\r\n\r\n")) {
+        Serial.println("Invalid response from server.");
+        return false;
+      }
+
+      if (song.imgAlloc) {
+        free(song.imgPtr);
+        song.imgAlloc = false;
+      }
+
+      if (!(song.imgPtr = (uint8_t*) malloc(sizeof(uint8_t) * numBytes))) {
+        Serial.println("Malloc failed...");
+        return false;
+      }
+
+      song.imgAlloc = true;
+      int offset = 0;
+
+      uint8_t buf[128];
+      while (client.connected() && offset < numBytes) {
+
+        size_t available = client.available();
+        Serial.printf("AVAIL: %u\n", available);
+
+        if (available) {
+          int bytes = client.readBytes(buf, min(available, sizeof(buf)));
+          memcpy(song.imgPtr + offset, buf, bytes);
+          offset += bytes;
+        }
+      }
+
+      song.imgSize = (size_t) offset;
+      client.stop();
+
+      return true;
     }
-
-    String req  = "GET " + url + " HTTP/1.0\r\n" +
-                  "Connection: close\r\n\r\n"; 
-
-    client.print(req);
-    String ln = client.readStringUntil('{');
-    Serial.println(ln);
-
-    int start = ln.indexOf(' ');
-    int end = ln.indexOf(' ', start + 1);
-    String status = ln.substring(start, end);
-
-    if (!strcmp(status.c_str(), "200")) {
-      Serial.printf("An error occurred: HTTP %s\r\n", status);
-      return false;
-    }
-
-    return true;
-
-  }
 };
+
+bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+
+  if (y <= TFT_HEIGHT) {
+    return false;
+  }
+
+  screen.drawRGBBitmap(x, y, bitmap, w, h);
+  return true;
+}
 
 PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 6, 40, COLOR_RGB565_WHITE);
 SpotifyConn spotifyConn;
@@ -332,23 +413,31 @@ void loop(){
   if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
     if (spotifyConn.accessTokenSet) {
       if (spotifyConn.getCurrentlyPlaying()) {
+
+        SongInfo song = spotifyConn.song;
         Serial.println("Requested");
         int prevProgress = playbackBar.progress;
         int prevDuration = playbackBar.duration;
-        playbackBar.progress = spotifyConn.song.progressMs;
-        playbackBar.duration = spotifyConn.song.durationMs;
+        playbackBar.progress = song.progressMs;
+        playbackBar.duration = song.durationMs;
         playbackBar.setPlayState(PLAYING);
 
         // Base off song id instead
         if (playbackBar.progress < prevProgress || playbackBar.duration != prevDuration) {
+
           screen.fillScreen(COLOR_RGB565_BLACK);
           screen.setCursor(0,0);
-          screen.println(spotifyConn.song.songName);
-          screen.println(spotifyConn.song.artistName);
-          screen.println(spotifyConn.song.albumName);
+          screen.println(song.songName);
+          screen.println(song.artistName);
+          screen.println(song.albumName);
 
           // get image
           spotifyConn.getAlbumArt();
+
+          TJpgDec.setJpgScale(1);
+          TJpgDec.setCallback(drawBmp);
+          TJpgDec.setSwapBytes(true);
+          TJpgDec.drawJpg(10, 40, song.imgPtr, song.imgSize);
         }
       
       } else {
