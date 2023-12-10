@@ -215,7 +215,6 @@ class SpotifyConn {
       const char*  host = "api.spotify.com";
       const int    port = 443;
 
-      client.flush();
       if (!client.connect(host, port)) {
         Serial.println("Connection failed!");
         return false;
@@ -228,6 +227,7 @@ class SpotifyConn {
       String req  = "GET " + url + " HTTP/1.0\r\n" +
                     "Host: " + host + "\r\n" +
                     "Authorization: " + auth + "\r\n" +
+                    "Cache-Control: no-cache\r\n" +
                     "Connection: close\r\n\r\n"; 
 
       client.print(req);
@@ -247,12 +247,14 @@ class SpotifyConn {
         return false;
       }
 
-      String json = client.readStringUntil('\r');
+      client.find("{");
+
+      String json = "{" + client.readStringUntil('\r');
       Serial.println(json);
       client.flush();
       client.stop();
-      StaticJsonDocument<1024> doc;
-      StaticJsonDocument<512> filter;
+      DynamicJsonDocument doc(4096);
+      StaticJsonDocument<256> filter;
 
       filter["progress_ms"] = true;
       JsonObject filter_item = filter.createNestedObject("item");
@@ -292,7 +294,7 @@ class SpotifyConn {
         int height = images[i]["height"].as<int>();
         int width = images[i]["width"].as<int>();
 
-        if (height <= 200 && width <= 200) {
+        if (height <= 300 && width <= 300) {
           Serial.printf("%d x %d\n", width, height);
           song.height = height;
           song.width = width;
@@ -318,7 +320,8 @@ class SpotifyConn {
       yield();
 
       String req  = "GET " + url + " HTTP/1.0\r\n" +
-                    "Host: " + host + "\r\n";
+                    "Host: " + host + "\r\n" + 
+                    "Cache-Control: no-cache\r\n";
 
       if (client.println(req) == 0) {
         Serial.println("Failed to send request...");
@@ -350,21 +353,20 @@ class SpotifyConn {
 
       if (!(song.imgPtr = (uint8_t*) malloc(sizeof(uint8_t) * numBytes))) {
         Serial.println("Malloc failed...");
+        Serial.println(ESP.getFreeHeap());
+        Serial.println("Of heap left...");
         return false;
       }
 
       song.imgAlloc = true;
       int offset = 0;
 
-      uint8_t buf[128];
-      while (client.connected() && offset < numBytes) {
+      while (offset < numBytes) {
 
         size_t available = client.available();
-        Serial.printf("AVAIL: %u\n", available);
 
         if (available) {
-          int bytes = client.readBytes(buf, min(available, sizeof(buf)));
-          memcpy(song.imgPtr + offset, buf, bytes);
+          int bytes = client.readBytes(song.imgPtr + offset, available);
           offset += bytes;
         }
 
@@ -372,7 +374,9 @@ class SpotifyConn {
         yield();
       }
 
-      song.imgSize = (size_t) offset;
+      Serial.println(offset);
+      Serial.println(numBytes);
+      song.imgSize = (size_t) numBytes;
       client.flush();
       client.stop();
       return true;
@@ -381,9 +385,9 @@ class SpotifyConn {
 
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
 
-  if (y <= TFT_HEIGHT) {
-    return false;
-  }
+  // if (y <= TFT_HEIGHT) {
+    // return false;
+  // }
 
   screen.drawRGBBitmap(x, y, bitmap, w, h);
   return true;
@@ -415,7 +419,8 @@ void webServerHandleCallback() {
 }
 
 int play = 0;
-uint32_t lastRequest;
+uint32_t lastRequest = 0;
+bool imageIsSet = false;
 void setup() {
   Serial.begin(115200);
   screen.begin();
@@ -425,16 +430,17 @@ void setup() {
   server.on("/callback", webServerHandleCallback);
   server.begin();
   spotifyConn.connect(SSID, PASSPHRASE);
-  lastRequest = 0;
 }
 
 void loop(){
   server.handleClient();
-  delay(40);
+  yield();
 
   if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
     if (spotifyConn.accessTokenSet) {
       if (spotifyConn.getCurrentlyPlaying()) {
+        
+        yield();
 
         SongInfo song = spotifyConn.song;
         Serial.println("Requested");
@@ -453,13 +459,20 @@ void loop(){
           screen.println(song.artistName);
           screen.println(song.albumName);
 
-          // get image
-          spotifyConn.getAlbumArt();
+          imageIsSet = false;
+        }
 
-          // TJpgDec.setJpgScale(1);
-          // TJpgDec.setCallback(drawBmp);
-          // TJpgDec.setSwapBytes(true);
-          // TJpgDec.drawJpg(10, 40, song.imgPtr, song.imgSize);
+        if (!imageIsSet) {
+          // get image
+          if (spotifyConn.getAlbumArt()) {
+            Serial.println("Attempting print...");
+            TJpgDec.setJpgScale(2);
+            TJpgDec.setCallback(drawBmp);
+            // TJpgDec.setSwapBytes(true);
+            // screen.drawRGBBitmap(10, 10, song.imgPtr, song.width, song.height);
+            Serial.println(TJpgDec.drawJpg(10, 10, song.imgPtr, song.imgSize));
+            imageIsSet = true;
+          }
         }
       
       } else {
@@ -477,6 +490,6 @@ void loop(){
     playbackBar.progress = min(interpolatedTime, spotifyConn.song.durationMs);
   }
 
-  playbackBar.draw();
   yield();
+  playbackBar.draw();
 }
