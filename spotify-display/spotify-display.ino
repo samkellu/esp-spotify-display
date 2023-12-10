@@ -8,6 +8,7 @@
 
 #include <ArduinoJson.h>
 #include <base64.h>
+// #include <
 
 #define POT          A0
 #define TFT_CS       5  // D6
@@ -169,6 +170,9 @@ class SpotifyConn {
         return false;
       }
 
+      // Reset WDT
+      yield();
+
       String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
       String body = "grant_type=authorization_code&code=" + code + "&redirect_uri=http://192.168.1.15/callback";
       String req  = "POST " + url + " HTTP/1.0\r\n" +
@@ -211,10 +215,14 @@ class SpotifyConn {
       const char*  host = "api.spotify.com";
       const int    port = 443;
 
+      client.flush();
       if (!client.connect(host, port)) {
         Serial.println("Connection failed!");
         return false;
       }
+
+      // Reset WDT
+      yield();
 
       String auth = "Bearer " + accessToken;
       String req  = "GET " + url + " HTTP/1.0\r\n" +
@@ -223,8 +231,8 @@ class SpotifyConn {
                     "Connection: close\r\n\r\n"; 
 
       client.print(req);
-      String ln = client.readStringUntil('{');
-      Serial.println(ln);
+      String ln = client.readStringUntil('\r');
+
       int start = ln.indexOf(' ');
       int end = ln.indexOf(' ', start + 1);
       String status = ln.substring(start, end);
@@ -234,8 +242,15 @@ class SpotifyConn {
         return false;
       }
 
-      String json = "{" + client.readStringUntil('\r');
-      // Serial.println(json);
+      if (!client.find("\r\n\r\n")) {
+        Serial.println("Invalid response from server.");
+        return false;
+      }
+
+      String json = client.readStringUntil('\r');
+      Serial.println(json);
+      client.flush();
+      client.stop();
       StaticJsonDocument<1024> doc;
       StaticJsonDocument<512> filter;
 
@@ -258,6 +273,7 @@ class SpotifyConn {
         return false;
       }
 
+      #define DEBUG
       #ifdef DEBUG
         serializeJsonPretty(doc, Serial);
       #endif
@@ -298,6 +314,9 @@ class SpotifyConn {
         return false;
       }
 
+      // Reset WDT
+      yield();
+
       String req  = "GET " + url + " HTTP/1.0\r\n" +
                     "Host: " + host + "\r\n";
 
@@ -307,7 +326,6 @@ class SpotifyConn {
       }
 
       String ln = client.readStringUntil('\r');
-
       int start = ln.indexOf(' ');
       int end = ln.indexOf(' ', start + 1);
       String status = ln.substring(start, end);
@@ -325,6 +343,7 @@ class SpotifyConn {
       }
 
       if (song.imgAlloc) {
+        Serial.println("Freed");
         free(song.imgPtr);
         song.imgAlloc = false;
       }
@@ -348,11 +367,14 @@ class SpotifyConn {
           memcpy(song.imgPtr + offset, buf, bytes);
           offset += bytes;
         }
+
+        // Reset WDT
+        yield();
       }
 
       song.imgSize = (size_t) offset;
+      client.flush();
       client.stop();
-
       return true;
     }
 };
@@ -434,10 +456,10 @@ void loop(){
           // get image
           spotifyConn.getAlbumArt();
 
-          TJpgDec.setJpgScale(1);
-          TJpgDec.setCallback(drawBmp);
-          TJpgDec.setSwapBytes(true);
-          TJpgDec.drawJpg(10, 40, song.imgPtr, song.imgSize);
+          // TJpgDec.setJpgScale(1);
+          // TJpgDec.setCallback(drawBmp);
+          // TJpgDec.setSwapBytes(true);
+          // TJpgDec.drawJpg(10, 40, song.imgPtr, song.imgSize);
         }
       
       } else {
@@ -456,4 +478,5 @@ void loop(){
   }
 
   playbackBar.draw();
+  yield();
 }
