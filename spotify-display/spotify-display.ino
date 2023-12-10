@@ -8,7 +8,6 @@
 
 #include <ArduinoJson.h>
 #include <base64.h>
-// #include <
 
 #define POT          A0
 #define TFT_CS       5  // D6
@@ -17,8 +16,6 @@
 #define TFT_WIDTH    240
 #define TFT_HEIGHT   320
 #define REQUEST_RATE 20000 // ms
-
-const String ENDPOINT = "https://api.spotify.com/v1/me";
 
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 
@@ -150,13 +147,15 @@ class SpotifyConn {
 
     // Connects to the network specified in credentials.h
     void connect(const char* ssid, const char* passphrase) {
-      Serial.printf("Attempting connection to %s...\n", ssid);
+      Serial.print(F("Attempting connection to "));
+      Serial.println(ssid);
       WiFi.begin(ssid, passphrase);
       while ((WiFi.status() != WL_CONNECTED)) {
         delay(200);
       }
 
-      Serial.printf("Successfully connected to %s!\n", ssid);
+      Serial.print(F("Successfully connected to "));
+      Serial.println(ssid);
     }
 
     bool getAuth(String code) {
@@ -166,7 +165,7 @@ class SpotifyConn {
       String      url  = "/api/token";
 
       if (!client.connect(host, port)) {
-        Serial.println("Connection failed!");
+        Serial.println(F("Connection failed!"));
         return false;
       }
 
@@ -191,7 +190,8 @@ class SpotifyConn {
       DeserializationError err = deserializeJson(doc, json);
 
       if (err) {
-        Serial.printf("Deserialisation failed for string: %s\n", json);
+        Serial.print(F("Deserialisation failed for string: "));
+        Serial.println(json);
         Serial.println(err.f_str());
         return false;
       }
@@ -216,19 +216,17 @@ class SpotifyConn {
       const int    port = 443;
 
       if (!client.connect(host, port)) {
-        Serial.println("Connection failed!");
+        Serial.println(F("Connection failed!"));
         return false;
       }
 
       // Reset WDT
       yield();
 
-      String auth = "Bearer " + accessToken;
-      String req  = "GET " + url + " HTTP/1.0\r\n" +
-                    "Host: " + host + "\r\n" +
-                    "Authorization: " + auth + "\r\n" +
-                    "Cache-Control: no-cache\r\n" +
-                    "Connection: close\r\n\r\n"; 
+      String auth = F("Bearer ") + accessToken;
+      String req  = F("GET ") + url + F(" HTTP/1.0\r\nHost: ") +
+                    host + F("\r\nAuthorization: ") +
+                    auth + F("\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"); 
 
       client.print(req);
       String ln = client.readStringUntil('\r');
@@ -238,21 +236,18 @@ class SpotifyConn {
       String status = ln.substring(start, end);
 
       if (!strcmp(status.c_str(), "200")) {
-        Serial.printf("An error occurred: HTTP %s\r\n", status);
+        Serial.print(F("An error occurred: HTTP "));
+        Serial.println(status);
         return false;
       }
 
       if (!client.find("\r\n\r\n")) {
-        Serial.println("Invalid response from server.");
+        Serial.println(F("Invalid response from server."));
         return false;
       }
 
-      client.find("{");
-
-      String json = "{" + client.readStringUntil('\r');
-      Serial.println(json);
-      client.flush();
-      client.stop();
+      String json = client.readStringUntil('\r');
+      Serial.println(json.length());
       DynamicJsonDocument doc(4096);
       StaticJsonDocument<256> filter;
 
@@ -270,15 +265,16 @@ class SpotifyConn {
       DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
 
       if (err) {
-        Serial.printf("Deserialisation failed for string: %s\n", json);
+        Serial.print(F("Deserialisation failed for string:"));
+        Serial.println(json);
         Serial.println(err.f_str());
         return false;
       }
 
-      #define DEBUG
-      #ifdef DEBUG
-        serializeJsonPretty(doc, Serial);
-      #endif
+      // #define DEBUG
+      // #ifdef DEBUG
+      //   serializeJsonPretty(doc, Serial);
+      // #endif
 
       song.progressMs = doc["progress_ms"].as<int>();
       JsonObject item = doc["item"];
@@ -288,14 +284,12 @@ class SpotifyConn {
       song.durationMs = item["duration_ms"].as<int>();
 
       JsonArray images = item["album"]["images"];
-      Serial.println(images.size());
 
       for (int i = 0; i < images.size(); i++) {
         int height = images[i]["height"].as<int>();
         int width = images[i]["width"].as<int>();
 
-        if (height <= 300 && width <= 300) {
-          Serial.printf("%d x %d\n", width, height);
+        if (height <= 200 && width <= 200) {
           song.height = height;
           song.width = width;
           song.imgUrl = images[i]["url"].as<String>();
@@ -312,16 +306,15 @@ class SpotifyConn {
       const String url = song.imgUrl.substring(17);
 
       if (!client.connect(host, port)) {
-        Serial.println("Connection failed!");
+        Serial.println(F("Connection failed!"));
         return false;
       }
 
       // Reset WDT
       yield();
 
-      String req  = "GET " + url + " HTTP/1.0\r\n" +
-                    "Host: " + host + "\r\n" + 
-                    "Cache-Control: no-cache\r\n";
+      String req  = F("GET ") + url + F(" HTTP/1.0\r\nHost: ") +
+                    host + F("\r\nCache-Control: no-cache\r\n");
 
       if (client.println(req) == 0) {
         Serial.println("Failed to send request...");
@@ -334,27 +327,34 @@ class SpotifyConn {
       String status = ln.substring(start, end);
 
       if (!strcmp(status.c_str(), "200")) {
-        Serial.printf("An error occurred: HTTP %s\r\n", status);
+        Serial.print(F("An error occurred: HTTP "));
+        Serial.println(status);
+        client.flush();
+        client.stop();
         return false;
       }
 
       int numBytes = getContentLength();
       Serial.println(numBytes);
       if (!client.find("\r\n\r\n")) {
-        Serial.println("Invalid response from server.");
+        Serial.println(F("Invalid response from server."));
+        client.flush();
+        client.stop();
         return false;
       }
 
       if (song.imgAlloc) {
-        Serial.println("Freed");
+        Serial.println(F("Freed"));
         free(song.imgPtr);
         song.imgAlloc = false;
       }
 
       if (!(song.imgPtr = (uint8_t*) malloc(sizeof(uint8_t) * numBytes))) {
-        Serial.println("Malloc failed...");
+        Serial.println(F("Malloc failed..."));
         Serial.println(ESP.getFreeHeap());
-        Serial.println("Of heap left...");
+        Serial.println(F("Of heap left..."));
+        client.flush();
+        client.stop();
         return false;
       }
 
@@ -406,7 +406,7 @@ void webServerHandleRoot() {
 void webServerHandleCallback() {
   if (server.arg("code") != "") {
     if (spotifyConn.getAuth(server.arg("code"))) {
-      Serial.println("Successfully got access tokens!");
+      Serial.println(F("Successfully got access tokens!"));
       server.send(200, "text/html", "Login complete! you may close this tab.\r\n");
     
     } else {
@@ -414,7 +414,7 @@ void webServerHandleCallback() {
     }
 
   } else {
-    Serial.println("An error occurred. Server provided no code arg.");
+    Serial.println(F("An error occurred. Server provided no code arg."));
   }
 }
 
@@ -443,7 +443,7 @@ void loop(){
         yield();
 
         SongInfo song = spotifyConn.song;
-        Serial.println("Requested");
+        Serial.println(F("Requested"));
         int prevProgress = playbackBar.progress;
         int prevDuration = playbackBar.duration;
         playbackBar.progress = song.progressMs;
@@ -465,18 +465,21 @@ void loop(){
         if (!imageIsSet) {
           // get image
           if (spotifyConn.getAlbumArt()) {
-            Serial.println("Attempting print...");
-            TJpgDec.setJpgScale(2);
+            Serial.println(F("Attempting print..."));
+            TJpgDec.setJpgScale(1);
             TJpgDec.setCallback(drawBmp);
             // TJpgDec.setSwapBytes(true);
             // screen.drawRGBBitmap(10, 10, song.imgPtr, song.width, song.height);
-            Serial.println(TJpgDec.drawJpg(10, 10, song.imgPtr, song.imgSize));
             imageIsSet = true;
+            if (TJpgDec.drawJpg(86, 100, song.imgPtr, song.imgSize)) {
+              Serial.println(F("Failed to draw."));
+              imageIsSet = false;
+            }
           }
         }
       
       } else {
-        Serial.println("Failed to fetch...");
+        Serial.println(F("Failed to fetch..."));
       }
 
     } else {
