@@ -70,12 +70,12 @@ class PlaybackBar {
 
         // Animate wave closing back to straight line when music is paused
         for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y + wave[(curTime + i)%numSamples], COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y + closingWave[(curTime + i)%numSamples], color);
+          screen.drawPixel(i, y + wave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
+          screen.drawPixel(i, y + closingWave[(prevTime + i)%numSamples], color);
         }
         delay(30);
         for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y + closingWave[(curTime + i)%numSamples], COLOR_RGB565_BLACK);
+          screen.drawPixel(i, y + closingWave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
           screen.drawPixel(i, y, color);
         }
         screen.drawFastHLine(x, y, width, color);
@@ -144,7 +144,6 @@ class SpotifyConn {
     SpotifyConn() {
       client.setInsecure();
       accessTokenSet = false;
-      song.imgAlloc = false;
     }
 
     // Connects to the network specified in credentials.h
@@ -254,6 +253,7 @@ class SpotifyConn {
       StaticJsonDocument<256> filter;
 
       filter["progress_ms"] = true;
+      filter["is_playing"] = true;
       JsonObject filter_item = filter.createNestedObject("item");
       filter_item["name"] = true;
       filter_item["duration_ms"] = true;
@@ -279,6 +279,7 @@ class SpotifyConn {
       // #endif
 
       song.progressMs = doc["progress_ms"].as<int>();
+      song.isPlaying = doc["is_playing"].as<bool>();
       JsonObject item = doc["item"];
       song.songName = item["name"].as<String>();
       song.albumName = item["album"]["name"].as<String>();
@@ -371,7 +372,6 @@ class SpotifyConn {
       Serial.println(numBytes);
       f.close();
       Serial.println(F("Wrote to file."));
-      song.imgSize = (size_t) numBytes;
       client.flush();
       client.stop();
       return true;
@@ -388,7 +388,7 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   return true;
 }
 
-PlaybackBar playbackBar = PlaybackBar(15, 280, TFT_WIDTH-30, 5, 6, 40, COLOR_RGB565_WHITE);
+PlaybackBar playbackBar = PlaybackBar(15, 300, TFT_WIDTH-30, 5, 6, 40, COLOR_RGB565_WHITE);
 SpotifyConn spotifyConn;
 ESP8266WebServer server(80);
 
@@ -426,7 +426,6 @@ void setup() {
 
   screen.begin();
   screen.fillScreen(COLOR_RGB565_BLACK);
-  screen.setTextSize(3);
   server.on("/", webServerHandleRoot);
   server.on("/callback", webServerHandleCallback);
   server.begin();
@@ -436,6 +435,7 @@ void setup() {
 void loop(){
   server.handleClient();
   yield();
+
 
   if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
     if (spotifyConn.accessTokenSet) {
@@ -449,16 +449,17 @@ void loop(){
         int prevDuration = playbackBar.duration;
         playbackBar.progress = song.progressMs;
         playbackBar.duration = song.durationMs;
-        playbackBar.setPlayState(PLAYING);
+        playbackBar.setPlayState(song.isPlaying);
 
         // Base off song id instead
-        if (playbackBar.progress < prevProgress || playbackBar.duration != prevDuration) {
+        if ((song.isPlaying && playbackBar.progress < prevProgress) || playbackBar.duration != prevDuration) {
 
           screen.fillScreen(COLOR_RGB565_BLACK);
-          screen.setCursor(0,0);
+          screen.setCursor(10,240);
+          screen.setTextSize(2);
           screen.println(song.songName);
+          screen.setTextSize(1);
           screen.println(song.artistName);
-          screen.println(song.albumName);
 
           imageIsSet = false;
         }
@@ -477,7 +478,7 @@ void loop(){
             }
             yield();
 
-            TJpgDec.drawFsJpg(45, 100, IMG_PATH, LittleFS);
+            TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
             Serial.println(F("Drawd"));
           }
         }
@@ -497,6 +498,5 @@ void loop(){
     playbackBar.progress = min(interpolatedTime, spotifyConn.song.durationMs);
   }
 
-  yield();
   playbackBar.draw();
 }
