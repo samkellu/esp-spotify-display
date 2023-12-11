@@ -8,6 +8,7 @@
 
 #include <ArduinoJson.h>
 #include <base64.h>
+#include "LittleFS.h"
 
 #define POT          A0
 #define TFT_CS       5  // D6
@@ -16,6 +17,7 @@
 #define TFT_WIDTH    240
 #define TFT_HEIGHT   320
 #define REQUEST_RATE 20000 // ms
+#define IMG_PATH     "/img.jpg"
 
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 
@@ -246,9 +248,9 @@ class SpotifyConn {
         return false;
       }
 
-      String json = client.readStringUntil('\r');
-      Serial.println(json.length());
-      DynamicJsonDocument doc(4096);
+      // String json = client.readStringUntil('\r');
+      // Serial.println(json.length());
+      DynamicJsonDocument doc(1024);
       StaticJsonDocument<256> filter;
 
       filter["progress_ms"] = true;
@@ -262,11 +264,11 @@ class SpotifyConn {
       filter_item_album_images["url"] = true;
       filter_item_album_images["width"] = true;
       filter_item_album_images["height"] = true;
-      DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
+      DeserializationError err = deserializeJson(doc, client, DeserializationOption::Filter(filter));
 
       if (err) {
-        Serial.print(F("Deserialisation failed for string:"));
-        Serial.println(json);
+        Serial.print(F("Deserialisation failed"));
+        // Serial.println(json);
         Serial.println(err.f_str());
         return false;
       }
@@ -289,7 +291,7 @@ class SpotifyConn {
         int height = images[i]["height"].as<int>();
         int width = images[i]["width"].as<int>();
 
-        if (height <= 200 && width <= 200) {
+        if (height <= 300 && width <= 300) {
           song.height = height;
           song.width = width;
           song.imgUrl = images[i]["url"].as<String>();
@@ -343,30 +345,21 @@ class SpotifyConn {
         return false;
       }
 
-      if (song.imgAlloc) {
-        Serial.println(F("Freed"));
-        free(song.imgPtr);
-        song.imgAlloc = false;
-      }
-
-      if (!(song.imgPtr = (uint8_t*) malloc(sizeof(uint8_t) * numBytes))) {
-        Serial.println(F("Malloc failed..."));
-        Serial.println(ESP.getFreeHeap());
-        Serial.println(F("Of heap left..."));
-        client.flush();
-        client.stop();
+      File f = LittleFS.open(IMG_PATH, "w+");
+      if (!f) {
+        Serial.println("Failed to write image to file...");
         return false;
       }
 
-      song.imgAlloc = true;
       int offset = 0;
-
+      uint8_t buf[128];
       while (offset < numBytes) {
 
         size_t available = client.available();
 
         if (available) {
-          int bytes = client.readBytes(song.imgPtr + offset, available);
+          int bytes = client.readBytes(buf, min(available, sizeof(buf)));
+          f.write(buf, bytes);
           offset += bytes;
         }
 
@@ -376,6 +369,8 @@ class SpotifyConn {
 
       Serial.println(offset);
       Serial.println(numBytes);
+      f.close();
+      Serial.println(F("Wrote to file."));
       song.imgSize = (size_t) numBytes;
       client.flush();
       client.stop();
@@ -385,9 +380,9 @@ class SpotifyConn {
 
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
 
-  // if (y <= TFT_HEIGHT) {
-    // return false;
-  // }
+  if (y >= TFT_HEIGHT) {
+    return false;
+  }
 
   screen.drawRGBBitmap(x, y, bitmap, w, h);
   return true;
@@ -422,7 +417,13 @@ int play = 0;
 uint32_t lastRequest = 0;
 bool imageIsSet = false;
 void setup() {
+
   Serial.begin(115200);
+  if (!LittleFS.begin()) {
+    Serial.println("Failed to initialise file system.");
+    while (1) yield();
+  }
+
   screen.begin();
   screen.fillScreen(COLOR_RGB565_BLACK);
   screen.setTextSize(3);
@@ -465,16 +466,19 @@ void loop(){
         if (!imageIsSet) {
           // get image
           if (spotifyConn.getAlbumArt()) {
+
+            yield();
             Serial.println(F("Attempting print..."));
-            TJpgDec.setJpgScale(1);
+            TJpgDec.setJpgScale(2);
             TJpgDec.setCallback(drawBmp);
-            // TJpgDec.setSwapBytes(true);
-            // screen.drawRGBBitmap(10, 10, song.imgPtr, song.width, song.height);
             imageIsSet = true;
-            if (TJpgDec.drawJpg(86, 100, song.imgPtr, song.imgSize)) {
-              Serial.println(F("Failed to draw."));
-              imageIsSet = false;
+            if (LittleFS.exists(IMG_PATH)) {
+              Serial.println("ITS HERE!");
             }
+            yield();
+
+            TJpgDec.drawFsJpg(45, 100, IMG_PATH, LittleFS);
+            Serial.println(F("Drawd"));
           }
         }
       
