@@ -18,6 +18,7 @@
 #define TFT_HEIGHT   320
 #define REQUEST_RATE 20000 // ms
 #define IMG_PATH     "/img.jpg"
+#define PLAY_BAR_Y   300
 
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 
@@ -33,7 +34,7 @@ class PlaybackBar {
     int* wave;
     int* closingWave;
     int numSamples;
-    int prevProgressX = -1;
+    int prevBound = -1;
     uint32_t prevTime = 0;
 
   public:
@@ -64,7 +65,7 @@ class PlaybackBar {
       }
 
       uint32_t curTime = millis() / 100;
-      int bound = x + width * (progress/(float)duration);
+      int bound = x + width * (progress / (float) duration);
       // Stop playing
       if (!playStateFlag && playing) {
 
@@ -73,18 +74,21 @@ class PlaybackBar {
           screen.drawPixel(i, y + wave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
           screen.drawPixel(i, y + closingWave[(prevTime + i)%numSamples], color);
         }
-        delay(30);
+        delay(100);
         for (int i = x; i < bound; i++) {
           screen.drawPixel(i, y + closingWave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
           screen.drawPixel(i, y, color);
         }
         screen.drawFastHLine(x, y, width, color);
+        screen.drawFastVLine(prevBound, y-2*height, 4*height, COLOR_RGB565_BLACK);
         screen.drawFastVLine(bound, y-2*height, 4*height, color);
         playing = 0;
-        return;
 
       // Start playing after pause
       } else if (playStateFlag && !playing) {
+
+        screen.drawFastVLine(prevBound, y-2*height, 4*height, COLOR_RGB565_BLACK);
+        screen.drawFastVLine(bound, y-2*height, 4*height, color);
         // Animate wave opening to full height when music starts playing again
         for (int i = x; i < bound; i++) {
           screen.drawPixel(i, y, COLOR_RGB565_BLACK);
@@ -96,23 +100,32 @@ class PlaybackBar {
           screen.drawPixel(i, y + wave[(curTime + i)%numSamples], color);
         }
         playing = 1;
+        prevBound = bound;
+        prevTime = curTime;
+        return;
+
+      } else {
+        // Draw wave
+        for (int i = x; i < bound; i++) {
+          screen.drawPixel(i, y + wave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
+          screen.drawPixel(i, y + wave[(curTime + i)%numSamples], color);
+        }
+        prevTime = curTime;
       }
 
       // Clear pixels between previous progress bar and current
-      for (int i = prevProgressX; i < bound; i++) {
+      int sign = prevBound < bound ? 1 : -1;
+      for (int i = prevBound; i != bound; i += sign) {
         screen.drawFastVLine(i, y-2*height, 4*height, COLOR_RGB565_BLACK);
       }
       screen.drawFastHLine(bound, y, width + x - bound, color);
       screen.drawFastVLine(bound, y-2*height, 4*height, color);
-      prevProgressX = bound;
-
-      // Draw wave
-      for (int i = x; i < bound; i++) {
-        screen.drawPixel(i, y + wave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
-        screen.drawPixel(i, y + wave[(curTime + i)%numSamples], color);
-      }
-      prevTime = curTime;
+      prevBound = bound;
     }
+
+    // close animation when song ends.
+
+    // close when song paused, move bar
 
     void setPlayState(bool state) {
       playStateFlag = state;
@@ -250,19 +263,22 @@ class SpotifyConn {
       // String json = client.readStringUntil('\r');
       // Serial.println(json.length());
       DynamicJsonDocument doc(1024);
-      StaticJsonDocument<256> filter;
 
+      StaticJsonDocument<256> filter;
       filter["progress_ms"] = true;
-      filter["is_playing"] = true;
-      JsonObject filter_item = filter.createNestedObject("item");
-      filter_item["name"] = true;
-      filter_item["duration_ms"] = true;
-      filter_item["artists"][0]["name"] = true;
-      JsonObject filter_item_album = filter_item.createNestedObject("album");
-      filter_item_album["name"] = true;
+      filter["is_playing"]  = true;
+
+      JsonObject filter_item              = filter.createNestedObject("item");
+      JsonObject filter_item_album        = filter_item.createNestedObject("album");
       JsonObject filter_item_album_images = filter_item_album["images"].createNestedObject();
-      filter_item_album_images["url"] = true;
-      filter_item_album_images["width"] = true;
+
+      filter_item["name"]                = true;
+      filter_item["duration_ms"]         = true;
+      filter_item["artists"][0]["name"]  = true;
+      filter_item["id"]                  = true;
+      filter_item_album["name"]          = true;
+      filter_item_album_images["url"]    = true;
+      filter_item_album_images["width"]  = true;
       filter_item_album_images["height"] = true;
       DeserializationError err = deserializeJson(doc, client, DeserializationOption::Filter(filter));
 
@@ -278,23 +294,23 @@ class SpotifyConn {
       //   serializeJsonPretty(doc, Serial);
       // #endif
 
-      song.progressMs = doc["progress_ms"].as<int>();
-      song.isPlaying = doc["is_playing"].as<bool>();
-      JsonObject item = doc["item"];
-      song.songName = item["name"].as<String>();
-      song.albumName = item["album"]["name"].as<String>();
-      song.artistName = item["artists"][0]["name"].as<String>();
-      song.durationMs = item["duration_ms"].as<int>();
-
+      JsonObject item  = doc["item"];
       JsonArray images = item["album"]["images"];
+      song.progressMs  = doc["progress_ms"].as<int>();
+      song.isPlaying   = doc["is_playing"].as<bool>();
+      song.id          = item["id"].as<String>();
+      song.songName    = item["name"].as<String>();
+      song.albumName   = item["album"]["name"].as<String>();
+      song.artistName  = item["artists"][0]["name"].as<String>();
+      song.durationMs  = item["duration_ms"].as<int>();
 
       for (int i = 0; i < images.size(); i++) {
         int height = images[i]["height"].as<int>();
-        int width = images[i]["width"].as<int>();
+        int width  = images[i]["width"].as<int>();
 
         if (height <= 300 && width <= 300) {
           song.height = height;
-          song.width = width;
+          song.width  = width;
           song.imgUrl = images[i]["url"].as<String>();
           break;
         }
@@ -306,7 +322,7 @@ class SpotifyConn {
     bool getAlbumArt() {
       const char*  host = "i.scdn.co";
       const int    port = 443;
-      const String url = song.imgUrl.substring(17);
+      const String url  = song.imgUrl.substring(17);
 
       if (!client.connect(host, port)) {
         Serial.println(F("Connection failed!"));
@@ -372,7 +388,6 @@ class SpotifyConn {
       Serial.println(numBytes);
       f.close();
       Serial.println(F("Wrote to file."));
-      client.flush();
       client.stop();
       return true;
     }
@@ -388,7 +403,7 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   return true;
 }
 
-PlaybackBar playbackBar = PlaybackBar(15, 300, TFT_WIDTH-30, 5, 6, 40, COLOR_RGB565_WHITE);
+PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 6, 40, COLOR_RGB565_WHITE);
 SpotifyConn spotifyConn;
 ESP8266WebServer server(80);
 
@@ -430,56 +445,60 @@ void setup() {
   server.on("/callback", webServerHandleCallback);
   server.begin();
   spotifyConn.connect(SSID, PASSPHRASE);
+  TJpgDec.setJpgScale(2);
+  TJpgDec.setCallback(drawBmp);
 }
 
 void loop(){
   server.handleClient();
   yield();
 
-
   if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
     if (spotifyConn.accessTokenSet) {
+      String prevId = spotifyConn.song.id;
+      lastRequest = millis();
       if (spotifyConn.getCurrentlyPlaying()) {
         
+        Serial.println(F("Polled API"));
         yield();
 
         SongInfo song = spotifyConn.song;
-        Serial.println(F("Requested"));
-        int prevProgress = playbackBar.progress;
-        int prevDuration = playbackBar.duration;
-        playbackBar.progress = song.progressMs;
-        playbackBar.duration = song.durationMs;
-        playbackBar.setPlayState(song.isPlaying);
 
         // Base off song id instead
-        if ((song.isPlaying && playbackBar.progress < prevProgress) || playbackBar.duration != prevDuration) {
+        if (song.id != prevId) {
 
-          screen.fillScreen(COLOR_RGB565_BLACK);
+          // Clear album art and song/artist text
+          screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
+
+          // Rewrite song/artist text
           screen.setCursor(10,240);
           screen.setTextSize(2);
+          screen.setTextWrap(false);
           screen.println(song.songName);
           screen.setTextSize(1);
           screen.println(song.artistName);
 
+          // Close playback bar wave
+          playbackBar.setPlayState(false);
+          playbackBar.draw();
+
           imageIsSet = false;
         }
 
+        playbackBar.duration = song.durationMs;
+        playbackBar.progress = song.progressMs;
+        playbackBar.setPlayState(song.isPlaying);
+        // Draw progress indicator to correct location before image loads
+        playbackBar.draw();
+
+        // In the event of failure, continues fetching until success
         if (!imageIsSet) {
           // get image
           if (spotifyConn.getAlbumArt()) {
 
             yield();
-            Serial.println(F("Attempting print..."));
-            TJpgDec.setJpgScale(2);
-            TJpgDec.setCallback(drawBmp);
             imageIsSet = true;
-            if (LittleFS.exists(IMG_PATH)) {
-              Serial.println("ITS HERE!");
-            }
-            yield();
-
             TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
-            Serial.println(F("Drawd"));
           }
         }
       
@@ -489,9 +508,9 @@ void loop(){
 
     } else {
       screen.setCursor(0,0);
+      screen.setTextSize(3);
       screen.println(WiFi.localIP());
     }
-    lastRequest = millis();
 
   } else {
     int interpolatedTime = (int) (millis() - lastRequest + spotifyConn.song.progressMs);
