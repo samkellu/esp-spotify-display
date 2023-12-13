@@ -139,7 +139,6 @@ class SpotifyConn {
     HTTPClient httpsClient;
     String accessToken;
     String refreshToken;
-    int expiry;
 
     int getContentLength() {
       if (!client.find("Content-Length:")) {
@@ -153,6 +152,7 @@ class SpotifyConn {
   public:
     SongInfo song;
     bool accessTokenSet;
+    int expiry;
 
     SpotifyConn() {
       client.setInsecure();
@@ -216,7 +216,8 @@ class SpotifyConn {
       // TODO check if these keys are present first
       accessToken = doc["access_token"].as<String>();
       refreshToken = doc["refresh_token"].as<String>();
-      expiry = doc["expires_in"];
+      expiry = millis() + 1000 * doc["expires_in"].as<int>();
+      Serial.println(expiry);
 
       accessTokenSet = true;
       return true;
@@ -418,7 +419,7 @@ void webServerHandleRoot() {
 
 void webServerHandleCallback() {
   if (server.arg("code") != "") {
-    if (spotifyConn.getAuth(server.arg("code"))) {
+    if (spotifyConn.getAuth(false, server.arg("code"))) {
       Serial.println(F("Successfully got access tokens!"));
       server.send(200, "text/html", "Login complete! you may close this tab.\r\n");
     
@@ -455,6 +456,10 @@ void setup() {
 void loop(){
   server.handleClient();
   yield();
+
+  if (millis() > spotifyConn.expiry) {
+    spotifyConn.getAuth(true, "");
+  }
 
   if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
     if (spotifyConn.accessTokenSet) {
