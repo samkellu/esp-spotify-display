@@ -172,7 +172,7 @@ class SpotifyConn {
       Serial.println(ssid);
     }
 
-    bool getAuth(String code) {
+    bool getAuth(bool refresh, String code) {
 
       const char* host = "accounts.spotify.com";
       const int   port = 443;
@@ -188,6 +188,9 @@ class SpotifyConn {
 
       String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
       String body = "grant_type=authorization_code&code=" + code + "&redirect_uri=http://192.168.1.15/callback";
+      if (refresh) {
+        body = F("grant_type=refresh_token&refresh_token=") + refreshToken;
+      }
       String req  = "POST " + url + " HTTP/1.0\r\n" +
                     "Host: " + host + "\r\n" +
                     "Content-Length: " + String(body.length()) + "\r\n" +
