@@ -123,10 +123,6 @@ class PlaybackBar {
       prevBound = bound;
     }
 
-    // close animation when song ends.
-
-    // close when song paused, move bar
-
     void setPlayState(bool state) {
       playStateFlag = state;
     }
@@ -173,10 +169,9 @@ class SpotifyConn {
     }
 
     bool getAuth(bool refresh, String code) {
-
-      const char* host = "accounts.spotify.com";
-      const int   port = 443;
-      String      url  = "/api/token";
+      const String host = F("accounts.spotify.com");
+      const String url  = F("/api/token");
+      const int port    = 443;
 
       if (!client.connect(host, port)) {
         Serial.println(F("Connection failed!"));
@@ -186,24 +181,24 @@ class SpotifyConn {
       // Reset WDT
       yield();
 
-      String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
-      String body = "grant_type=authorization_code&code=" + code + "&redirect_uri=http://192.168.1.15/callback";
+      String auth = F("Basic ") + base64::encode(String(CLIENT) + F(":") + String(CLIENT_SECRET));
+      String body = F("grant_type=authorization_code&code=") + code + 
+                    F("&redirect_uri=http://") + WiFi.localIP().toString() + F("callback");
+
       if (refresh) {
         body = F("grant_type=refresh_token&refresh_token=") + refreshToken;
       }
-      String req  = "POST " + url + " HTTP/1.0\r\n" +
-                    "Host: " + host + "\r\n" +
-                    "Content-Length: " + String(body.length()) + "\r\n" +
-                    "Content-Type: application/x-www-form-urlencoded\r\n" +
-                    "Authorization: " + auth + "\r\n" +
-                    "Connection: close\r\n\r\n" + 
+      String req  = F("POST ") + url + F(" HTTP/1.0\r\nHost: ") + 
+                    host + F("\r\nContent-Length: ") + String(body.length()) +
+                    F("\r\nContent-Type: application/x-www-form-urlencoded\r\n") +
+                    F("Authorization: ") + auth + F("\r\nConnection: close\r\n\r\n") + 
                     body;
 
       client.print(req);
       client.readStringUntil('{');
 
       DynamicJsonDocument doc(1024);
-      String json = "{" + client.readStringUntil('\r');
+      String json = F("{") + client.readStringUntil('\r');
       DeserializationError err = deserializeJson(doc, json);
 
       if (err) {
@@ -224,22 +219,18 @@ class SpotifyConn {
     }
 
     bool getCurrentlyPlaying() {
-
       if (!accessTokenSet) {
         return false;
       }
 
-      const String url  = "/v1/me/player/currently-playing";
-      const char*  host = "api.spotify.com";
+      const String host = F("api.spotify.com");
+      const String url  = F("/v1/me/player/currently-playing");
       const int    port = 443;
 
       if (!client.connect(host, port)) {
         Serial.println(F("Connection failed!"));
         return false;
       }
-
-      // Reset WDT
-      yield();
 
       String auth = F("Bearer ") + accessToken;
       String req  = F("GET ") + url + F(" HTTP/1.0\r\nHost: ") +
@@ -249,8 +240,8 @@ class SpotifyConn {
       client.print(req);
       String ln = client.readStringUntil('\r');
 
-      int start = ln.indexOf(' ');
-      int end = ln.indexOf(' ', start + 1);
+      int start     = ln.indexOf(' ');
+      int end       = ln.indexOf(' ', start + 1);
       String status = ln.substring(start, end);
 
       if (!strcmp(status.c_str(), "200")) {
@@ -264,10 +255,7 @@ class SpotifyConn {
         return false;
       }
 
-      // String json = client.readStringUntil('\r');
-      // Serial.println(json.length());
       DynamicJsonDocument doc(1024);
-
       StaticJsonDocument<256> filter;
       filter["progress_ms"] = true;
       filter["is_playing"]  = true;
@@ -284,11 +272,10 @@ class SpotifyConn {
       filter_item_album_images["url"]    = true;
       filter_item_album_images["width"]  = true;
       filter_item_album_images["height"] = true;
-      DeserializationError err = deserializeJson(doc, client, DeserializationOption::Filter(filter));
 
+      DeserializationError err = deserializeJson(doc, client, DeserializationOption::Filter(filter));
       if (err) {
         Serial.print(F("Deserialisation failed"));
-        // Serial.println(json);
         Serial.println(err.f_str());
         return false;
       }
@@ -324,9 +311,13 @@ class SpotifyConn {
     }
 
     bool getAlbumArt() {
-      const char*  host = "i.scdn.co";
-      const int    port = 443;
+      if (!accessTokenSet) {
+        return false;
+      }
+
+      const String host = F("i.scdn.co");
       const String url  = song.imgUrl.substring(17);
+      const int port    = 443;
 
       if (!client.connect(host, port)) {
         Serial.println(F("Connection failed!"));
@@ -352,7 +343,6 @@ class SpotifyConn {
       if (!strcmp(status.c_str(), "200")) {
         Serial.print(F("An error occurred: HTTP "));
         Serial.println(status);
-        client.flush();
         client.stop();
         return false;
       }
@@ -361,7 +351,6 @@ class SpotifyConn {
       Serial.println(numBytes);
       if (!client.find("\r\n\r\n")) {
         Serial.println(F("Invalid response from server."));
-        client.flush();
         client.stop();
         return false;
       }
@@ -388,10 +377,8 @@ class SpotifyConn {
         yield();
       }
 
-      Serial.println(offset);
-      Serial.println(numBytes);
       f.close();
-      Serial.println(F("Wrote to file."));
+      Serial.printf("Wrote to file %d/%d bytes\n", offset, numBytes);
       client.stop();
       return true;
     }
@@ -517,7 +504,7 @@ void loop(){
     } else {
       screen.setCursor(0,0);
       screen.setTextSize(3);
-      screen.println(WiFi.localIP());
+      screen.printf("Visit http://%s to log in :)\n", WiFi.localIP().toString());
     }
 
   } else {
