@@ -29,8 +29,8 @@ class PlaybackBar {
     uint16_t color;
     int x, y;
     int width, height;
-    int amplitude;
     float period;
+    int amplitude;
     int prevBound = -1;
     uint32_t prevTime = 0;
     uint32_t curTime = 0;
@@ -38,6 +38,7 @@ class PlaybackBar {
     int speed = 1;
 
   public:
+    int amplitudePercent;
     int progress = 0;
     int duration = 1;
 
@@ -58,6 +59,7 @@ class PlaybackBar {
 
       prevTime = curTime;
       curTime++;
+      int curAmplitude = amplitude * (amplitudePercent / (float) 100);
       int bound = x + width * (progress / (float) duration);
       // Stop playing
       if (!playStateFlag && playing) {
@@ -81,7 +83,7 @@ class PlaybackBar {
         screen.drawFastVLine(bound, y-2*height, 4*height, color);
 
         // Animate wave opening to full height when music starts playing again
-        for (int i = 1; i <= amplitude; i++) {
+        for (int i = 1; i <= curAmplitude; i++) {
           for (int j = x; j < bound; j++) {
             screen.drawPixel(j, y + (i - 1) * sin(period * (curTime + j)), COLOR_RGB565_BLACK);
             screen.drawPixel(j, y + i * sin(period * (curTime + j)), color);
@@ -96,9 +98,9 @@ class PlaybackBar {
         // Draw wave
         for (int i = x; i < bound; i++) {
           screen.drawPixel(i, y + prevAmplitude * sin(period * (prevTime + i)), COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y + amplitude * sin(period * (curTime + i)), color);
+          screen.drawPixel(i, y + curAmplitude * sin(period * (curTime + i)), color);
         }
-        prevAmplitude = amplitude;
+        prevAmplitude = curAmplitude;
       }
 
       // Clear pixels between previous progress bar and current
@@ -206,7 +208,7 @@ class SpotifyConn {
 
     bool getCurrentlyPlaying() {
       const String host = F("api.spotify.com");
-      const String url  = F("/v1/me/player/currently-playing");
+      const String url  = F("/v1/me/player");
       const int port    = 443;
 
       if (!client.connect(host, port)) {
@@ -221,9 +223,8 @@ class SpotifyConn {
 
       client.print(req);
       String ln = client.readStringUntil('\r');
-
-      int start     = ln.indexOf(' ');
-      int end       = ln.indexOf(' ', start + 1);
+      int start     = ln.indexOf(' ') + 1;
+      int end       = ln.indexOf(' ', start);
       String status = ln.substring(start, end);
 
       if (strcmp(status.c_str(), "200") != 0) {
@@ -238,14 +239,17 @@ class SpotifyConn {
       }
 
       DynamicJsonDocument doc(1024);
-      StaticJsonDocument<256> filter;
+      StaticJsonDocument<300> filter;
       filter["progress_ms"] = true;
       filter["is_playing"]  = true;
 
+      JsonObject filter_device            = filter.createNestedObject("device");
       JsonObject filter_item              = filter.createNestedObject("item");
       JsonObject filter_item_album        = filter_item.createNestedObject("album");
       JsonObject filter_item_album_images = filter_item_album["images"].createNestedObject();
 
+      filter_device["volume_percent"]    = true;
+      filter_device["name"]              = true;
       filter_item["name"]                = true;
       filter_item["duration_ms"]         = true;
       filter_item["artists"][0]["name"]  = true;
@@ -264,19 +268,21 @@ class SpotifyConn {
 
       // #define DEBUG
       // #ifdef DEBUG
-      //   serializeJsonPretty(doc, Serial);
+      // serializeJsonPretty(doc, Serial);
       // #endif
 
-      JsonObject item  = doc["item"];
-      JsonArray images = item["album"]["images"];
-      song.progressMs  = doc["progress_ms"].as<int>();
-      song.isPlaying   = doc["is_playing"].as<bool>();
-      song.id          = item["id"].as<String>();
-      song.songName    = item["name"].as<String>();
-      song.albumName   = item["album"]["name"].as<String>();
-      song.artistName  = item["artists"][0]["name"].as<String>();
-      song.durationMs  = item["duration_ms"].as<int>();
-      Serial.println(song.songName);
+      JsonObject device = doc["device"];
+      JsonObject item   = doc["item"];
+      JsonArray images  = item["album"]["images"];
+      song.progressMs   = doc["progress_ms"].as<int>();
+      song.isPlaying    = doc["is_playing"].as<bool>();
+      song.volume       = device["volume_percent"].as<int>();
+      song.deviceName   = device["name"].as<String>();
+      song.id           = item["id"].as<String>();
+      song.songName     = item["name"].as<String>();
+      song.albumName    = item["album"]["name"].as<String>();
+      song.artistName   = item["artists"][0]["name"].as<String>();
+      song.durationMs   = item["duration_ms"].as<int>();
 
       for (int i = 0; i < images.size(); i++) {
         int height = images[i]["height"].as<int>();
@@ -306,17 +312,17 @@ class SpotifyConn {
       // Reset WDT
       yield();
 
-      String req  = F("GET ") + url + F(" HTTP/1.0\r\nHost: ") +
-                    host + F("\r\nCache-Control: no-cache\r\n");
+      String req = F("GET ") + url + F(" HTTP/1.0\r\nHost: ") +
+                   host + F("\r\nCache-Control: no-cache\r\n");
 
       if (client.println(req) == 0) {
         Serial.println("Failed to send request...");
         return false;
       }
 
-      String ln = client.readStringUntil('\r');
-      int start = ln.indexOf(' ');
-      int end = ln.indexOf(' ', start + 1);
+      String ln     = client.readStringUntil('\r');
+      int start     = ln.indexOf(' ') + 1;
+      int end       = ln.indexOf(' ', start);
       String status = ln.substring(start, end);
 
       if (strcmp(status.c_str(), "200") != 0) {
@@ -327,7 +333,6 @@ class SpotifyConn {
       }
 
       int numBytes = getContentLength();
-      Serial.println(numBytes);
       if (!client.find("\r\n\r\n")) {
         Serial.println(F("Invalid response from server."));
         client.stop();
@@ -487,6 +492,12 @@ void loop(){
   } else {
     int interpolatedTime = (int) (millis() - lastRequest + spotifyConn.song.progressMs);
     playbackBar.progress = min(interpolatedTime, spotifyConn.song.durationMs);
+  }
+
+  if (playbackBar.amplitudePercent != spotifyConn.song.volume) {
+    int inc = playbackBar.amplitudePercent > spotifyConn.song.volume ? -4 : 4; 
+    playbackBar.amplitudePercent += inc;
+    playbackBar.amplitudePercent = min(max(0, playbackBar.amplitudePercent), 100);
   }
 
   playbackBar.draw();
