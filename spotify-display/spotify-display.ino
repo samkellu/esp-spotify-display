@@ -26,37 +26,29 @@ class PlaybackBar {
   private:
     bool playing = 0;
     bool playStateFlag = 0;
-    uint16_t time = 0;
     uint16_t color;
     int x, y;
     int width, height;
     int amplitude;
-    int* wave;
-    int* closingWave;
-    int numSamples;
+    float period;
     int prevBound = -1;
     uint32_t prevTime = 0;
+    uint32_t curTime = 0;
+    int prevAmplitude;
+    int speed = 1;
 
   public:
-    int progress = 70;
-    int duration = 100;
+    int progress = 0;
+    int duration = 1;
 
-    PlaybackBar(int x, int y, int width, int height, int amplitude, int numSamples, uint16_t color) {
-      this->x           = x;
-      this->y           = y;
-      this->width       = width;
-      this->height      = height;
-      this->color       = color;
-      this->amplitude   = amplitude;
-      this->numSamples  = numSamples;
-      this->wave        = (int*) malloc(sizeof(int) * numSamples);
-      this->closingWave = (int*) malloc(sizeof(int) * numSamples);
-
-      int idx = 0;
-      for (float i = 0; i < 2*PI && idx < numSamples; i += 2*PI / (float)numSamples) {
-        this->wave[idx] = round(sin(i) * amplitude);
-        this->closingWave[idx] = this->wave[idx++]/2;
-      }
+    PlaybackBar(int x, int y, int width, int height, int amplitude, float period, uint16_t color) {
+      this->x         = x;
+      this->y         = y;
+      this->width     = width;
+      this->height    = height;
+      this->color     = color;
+      this->amplitude = amplitude;
+      this->period    = period;
     }
 
     void draw() {
@@ -64,22 +56,20 @@ class PlaybackBar {
         return;
       }
 
-      uint32_t curTime = millis() / 100;
+      prevTime = curTime;
+      curTime++;
       int bound = x + width * (progress / (float) duration);
       // Stop playing
       if (!playStateFlag && playing) {
 
-        // Animate wave closing back to straight line when music is paused
-        for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y + wave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y + closingWave[(prevTime + i)%numSamples], color);
+        for (int i = prevAmplitude; i > 0; i--) {
+          for (int j = x; j < prevBound; j++) {
+            screen.drawPixel(j, y + i * sin(period * (prevTime + j)), COLOR_RGB565_BLACK);
+            screen.drawPixel(j, y + (i - 1) * sin(period * (prevTime + j)), color);
+          }
+          delay(100);
         }
-        delay(100);
-        for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y + closingWave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y, color);
-        }
-        screen.drawFastHLine(x, y, width, color);
+
         screen.drawFastVLine(prevBound, y-2*height, 4*height, COLOR_RGB565_BLACK);
         screen.drawFastVLine(bound, y-2*height, 4*height, color);
         playing = 0;
@@ -89,28 +79,26 @@ class PlaybackBar {
 
         screen.drawFastVLine(prevBound, y-2*height, 4*height, COLOR_RGB565_BLACK);
         screen.drawFastVLine(bound, y-2*height, 4*height, color);
+
         // Animate wave opening to full height when music starts playing again
-        for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y, COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y + closingWave[(curTime + i)%numSamples], color);
-        }
-        delay(40);
-        for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y + closingWave[(curTime + i)%numSamples], COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y + wave[(curTime + i)%numSamples], color);
+        for (int i = 1; i <= amplitude; i++) {
+          for (int j = x; j < bound; j++) {
+            screen.drawPixel(j, y + (i - 1) * sin(period * (curTime + j)), COLOR_RGB565_BLACK);
+            screen.drawPixel(j, y + i * sin(period * (curTime + j)), color);
+          }
+          delay(100);
         }
         playing = 1;
         prevBound = bound;
-        prevTime = curTime;
         return;
 
       } else {
         // Draw wave
         for (int i = x; i < bound; i++) {
-          screen.drawPixel(i, y + wave[(prevTime + i)%numSamples], COLOR_RGB565_BLACK);
-          screen.drawPixel(i, y + wave[(curTime + i)%numSamples], color);
+          screen.drawPixel(i, y + prevAmplitude * sin(period * (prevTime + i)), COLOR_RGB565_BLACK);
+          screen.drawPixel(i, y + amplitude * sin(period * (curTime + i)), color);
         }
-        prevTime = curTime;
+        prevAmplitude = amplitude;
       }
 
       // Clear pixels between previous progress bar and current
@@ -147,12 +135,11 @@ class SpotifyConn {
 
   public:
     SongInfo song;
-    bool accessTokenSet;
+    bool accessTokenSet = false;
     int expiry;
 
     SpotifyConn() {
       client.setInsecure();
-      accessTokenSet = false;
     }
 
     // Connects to the network specified in credentials.h
@@ -183,7 +170,7 @@ class SpotifyConn {
 
       String auth = F("Basic ") + base64::encode(String(CLIENT) + F(":") + String(CLIENT_SECRET));
       String body = F("grant_type=authorization_code&code=") + code + 
-                    F("&redirect_uri=http://") + WiFi.localIP().toString() + F("callback");
+                    F("&redirect_uri=http://") + WiFi.localIP().toString() + F("/callback");
 
       if (refresh) {
         body = F("grant_type=refresh_token&refresh_token=") + refreshToken;
@@ -212,20 +199,15 @@ class SpotifyConn {
       accessToken = doc["access_token"].as<String>();
       refreshToken = doc["refresh_token"].as<String>();
       expiry = millis() + 1000 * doc["expires_in"].as<int>();
-      Serial.println(expiry);
 
       accessTokenSet = true;
       return true;
     }
 
     bool getCurrentlyPlaying() {
-      if (!accessTokenSet) {
-        return false;
-      }
-
       const String host = F("api.spotify.com");
       const String url  = F("/v1/me/player/currently-playing");
-      const int    port = 443;
+      const int port    = 443;
 
       if (!client.connect(host, port)) {
         Serial.println(F("Connection failed!"));
@@ -244,7 +226,7 @@ class SpotifyConn {
       int end       = ln.indexOf(' ', start + 1);
       String status = ln.substring(start, end);
 
-      if (!strcmp(status.c_str(), "200")) {
+      if (strcmp(status.c_str(), "200") != 0) {
         Serial.print(F("An error occurred: HTTP "));
         Serial.println(status);
         return false;
@@ -294,6 +276,7 @@ class SpotifyConn {
       song.albumName   = item["album"]["name"].as<String>();
       song.artistName  = item["artists"][0]["name"].as<String>();
       song.durationMs  = item["duration_ms"].as<int>();
+      Serial.println(song.songName);
 
       for (int i = 0; i < images.size(); i++) {
         int height = images[i]["height"].as<int>();
@@ -311,10 +294,6 @@ class SpotifyConn {
     }
 
     bool getAlbumArt() {
-      if (!accessTokenSet) {
-        return false;
-      }
-
       const String host = F("i.scdn.co");
       const String url  = song.imgUrl.substring(17);
       const int port    = 443;
@@ -340,7 +319,7 @@ class SpotifyConn {
       int end = ln.indexOf(' ', start + 1);
       String status = ln.substring(start, end);
 
-      if (!strcmp(status.c_str(), "200")) {
+      if (strcmp(status.c_str(), "200") != 0) {
         Serial.print(F("An error occurred: HTTP "));
         Serial.println(status);
         client.stop();
@@ -385,7 +364,6 @@ class SpotifyConn {
 };
 
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-
   if (y >= TFT_HEIGHT) {
     return false;
   }
@@ -394,7 +372,7 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   return true;
 }
 
-PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 6, 40, COLOR_RGB565_WHITE);
+PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 6, 0.1, COLOR_RGB565_WHITE);
 SpotifyConn spotifyConn;
 ESP8266WebServer server(80);
 
@@ -444,67 +422,66 @@ void loop(){
   server.handleClient();
   yield();
 
+  if (!spotifyConn.accessTokenSet) {
+    screen.setCursor(0,0);
+    screen.setTextSize(2);
+    screen.printf("Visit \nhttp://%s\nto log in :)\n", WiFi.localIP().toString());
+    return;
+  }
+
   if (millis() > spotifyConn.expiry) {
     spotifyConn.getAuth(true, "");
   }
 
   if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
-    if (spotifyConn.accessTokenSet) {
-      String prevId = spotifyConn.song.id;
-      lastRequest = millis();
-      if (spotifyConn.getCurrentlyPlaying()) {
-        
-        Serial.println(F("Polled API"));
-        yield();
+    String prevId = spotifyConn.song.id;
+    lastRequest = millis();
+    if (spotifyConn.getCurrentlyPlaying()) {
+      
+      Serial.println(F("Polled API"));
+      yield();
 
-        SongInfo song = spotifyConn.song;
+      SongInfo song = spotifyConn.song;
 
-        // Base off song id instead
-        if (song.id != prevId) {
+      // Base off song id instead
+      if (song.id != prevId) {
 
-          // Clear album art and song/artist text
-          screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
+        // Clear album art and song/artist text
+        screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
 
-          // Rewrite song/artist text
-          screen.setCursor(10,240);
-          screen.setTextSize(2);
-          screen.setTextWrap(false);
-          screen.println(song.songName);
-          screen.setTextSize(1);
-          screen.println(song.artistName);
+        // Rewrite song/artist text
+        screen.setCursor(10,240);
+        screen.setTextSize(2);
+        screen.setTextWrap(false);
+        screen.println(song.songName);
+        screen.setTextSize(1);
+        screen.println(song.artistName);
 
-          // Close playback bar wave
-          playbackBar.setPlayState(false);
-          playbackBar.draw();
-
-          imageIsSet = false;
-        }
-
-        playbackBar.duration = song.durationMs;
-        playbackBar.progress = song.progressMs;
-        playbackBar.setPlayState(song.isPlaying);
-        // Draw progress indicator to correct location before image loads
+        // Close playback bar wave
+        playbackBar.setPlayState(false);
         playbackBar.draw();
 
-        // In the event of failure, continues fetching until success
-        if (!imageIsSet) {
-          // get image
-          if (spotifyConn.getAlbumArt()) {
-
-            yield();
-            imageIsSet = true;
-            TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
-          }
-        }
-      
-      } else {
-        Serial.println(F("Failed to fetch..."));
+        imageIsSet = false;
       }
 
+      playbackBar.duration = song.durationMs;
+      playbackBar.progress = song.progressMs;
+      playbackBar.setPlayState(song.isPlaying);
+      // Draw progress indicator to correct location before image loads
+      playbackBar.draw();
+
+      // In the event of failure, continues fetching until success
+      if (!imageIsSet) {
+        // get image
+        if (spotifyConn.getAlbumArt()) {
+          yield();
+          TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
+          imageIsSet = true;
+        }
+      }
+    
     } else {
-      screen.setCursor(0,0);
-      screen.setTextSize(3);
-      screen.printf("Visit http://%s to log in :)\n", WiFi.localIP().toString());
+      Serial.println(F("Failed to fetch..."));
     }
 
   } else {
