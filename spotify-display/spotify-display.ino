@@ -10,15 +10,16 @@
 #include <base64.h>
 #include "LittleFS.h"
 
-#define POT          A0
-#define TFT_CS       5  // D6
-#define TFT_RST      2  // D5
-#define TFT_DC       15 // D4
-#define TFT_WIDTH    240
-#define TFT_HEIGHT   320
-#define REQUEST_RATE 20000 // ms
-#define IMG_PATH     "/img.jpg"
-#define PLAY_BAR_Y   300
+#define POT           A0
+#define POT_READ_RATE 400 //ms
+#define TFT_CS        5  // D6
+#define TFT_RST       2  // D5
+#define TFT_DC        15 // D4
+#define TFT_WIDTH     240
+#define TFT_HEIGHT    320
+#define REQUEST_RATE  20000 // ms
+#define IMG_PATH      "/img.jpg"
+#define PLAY_BAR_Y    300
 
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 
@@ -377,7 +378,7 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   return true;
 }
 
-PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 6, 0.1, COLOR_RGB565_WHITE);
+PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, COLOR_RGB565_WHITE);
 SpotifyConn spotifyConn;
 ESP8266WebServer server(80);
 
@@ -402,8 +403,8 @@ void webServerHandleCallback() {
   }
 }
 
-int play = 0;
 uint32_t lastRequest = 0;
+uint32_t lastPotRead = 0;
 bool imageIsSet = false;
 void setup() {
 
@@ -494,6 +495,12 @@ void loop(){
     playbackBar.progress = min(interpolatedTime, spotifyConn.song.durationMs);
   }
 
+  if (millis() - lastPotRead > POT_READ_RATE) {
+    spotifyConn.song.volume = 100 * (analogRead(POT) / (float) 1023);
+    lastPotRead = millis();
+    Serial.println(spotifyConn.song.volume);
+  }
+  
   if (playbackBar.amplitudePercent != spotifyConn.song.volume) {
     int inc = playbackBar.amplitudePercent > spotifyConn.song.volume ? -4 : 4; 
     playbackBar.amplitudePercent += inc;
