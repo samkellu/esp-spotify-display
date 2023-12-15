@@ -367,6 +367,45 @@ class SpotifyConn {
       client.stop();
       return true;
     }
+
+    bool updateVolume() {
+      const String host = F("api.spotify.com");
+      const String url  = F("/v1/me/player/volume?volume_percent=") + String(song.volume);
+      const int port    = 443;
+
+      if (!client.connect(host, port)) {
+        Serial.println(F("Connection failed!"));
+        return false;
+      }
+
+      // Reset WDT
+      yield();
+
+      String auth = F("Bearer ") + accessToken;
+      String req = F("PUT ") + url +
+                   F(" HTTP/1.0\r\nHost: ") + host +
+                   F("\r\nAuthorization: ") + auth +
+                   F("\r\nContent-Length: 0") + 
+                   F("\r\nConnection: close\r\n\r\n");
+
+      if (client.println(req) == 0) {
+        Serial.println("Failed to send request...");
+        return false;
+      }
+
+      String ln     = client.readStringUntil('\r');
+      int start     = ln.indexOf(' ') + 1;
+      int end       = ln.indexOf(' ', start);
+      String status = ln.substring(start, end);
+
+      if (strcmp(status.c_str(), "204") != 0) {
+        Serial.print(F("An error occurred: HTTP "));
+        Serial.println(status);
+        return false;
+      }
+
+      return true;
+    }
 };
 
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
@@ -383,9 +422,13 @@ SpotifyConn spotifyConn;
 ESP8266WebServer server(80);
 
 void webServerHandleRoot() {
-  char webPage[1024];
-  sprintf(webPage, loginPage, CLIENT, "192.168.1.15");
-  server.send(200, "text/html", webPage);
+  String header = String("https://accounts.spotify.com/authorize?client_id=") + CLIENT +
+                  "&response_type=code&redirect_uri=http://192.168.1.15/callback"
+                  "&scope=%20user-modify-playback-state%20user-read-currently-playing%20"
+                  "user-read-playback-state";
+
+  server.sendHeader("Location", header, true);
+  server.send(302, "text/html", "");
 }
 
 void webServerHandleCallback() {
@@ -405,6 +448,7 @@ void webServerHandleCallback() {
 
 uint32_t lastRequest = 0;
 uint32_t lastPotRead = 0;
+uint32_t lastPotChange = 0;
 bool imageIsSet = false;
 void setup() {
 
@@ -496,11 +540,22 @@ void loop(){
   }
 
   if (millis() - lastPotRead > POT_READ_RATE) {
+    int oldVol = spotifyConn.song.volume;
     spotifyConn.song.volume = 100 * (analogRead(POT) / (float) 1023);
+
+    // Account for pot wobble
+    if (abs(oldVol - spotifyConn.song.volume) > 2) {
+      lastPotChange = millis();
+    }
+
     lastPotRead = millis();
-    Serial.println(spotifyConn.song.volume);
   }
-  
+
+  if (lastPotChange != 0 && millis() - 3000 < lastPotChange) {
+    lastPotChange = 0;
+    spotifyConn.updateVolume();
+  }
+
   if (playbackBar.amplitudePercent != spotifyConn.song.volume) {
     int inc = playbackBar.amplitudePercent > spotifyConn.song.volume ? -4 : 4; 
     playbackBar.amplitudePercent += inc;
