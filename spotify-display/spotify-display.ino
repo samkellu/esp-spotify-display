@@ -155,9 +155,6 @@ class SpotifyConn {
         return false;
       }
 
-      // Reset WDT
-      yield();
-
       String auth = F("Basic ") + base64::encode(String(CLIENT) + F(":") + String(CLIENT_SECRET));
       String body;
 
@@ -307,9 +304,6 @@ class SpotifyConn {
         return false;
       }
 
-      // Reset WDT
-      yield();
-
       String req = F("GET ") + url + F(" HTTP/1.0\r\nHost: ") +
                    host + F("\r\nCache-Control: no-cache\r\n");
 
@@ -392,9 +386,6 @@ class SpotifyConn {
         #endif
         return false;
       }
-
-      // Reset WDT
-      yield();
 
       String auth = F("Bearer ") + accessToken;
       String req  = F("PUT ") + url +
@@ -524,7 +515,6 @@ void loop(){
       #ifdef DEBUG
         Serial.println(F("Polled API"));
       #endif
-      yield();
 
       SongInfo song = spotifyConn.song;
 
@@ -557,8 +547,8 @@ void loop(){
       // In the event of failure, continues fetching until success
       if (!imageIsSet) {
         // Get and draw album art
+        yield();
         if (spotifyConn.getAlbumArt()) {
-          yield();
           TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
           imageIsSet = true;
         }
@@ -578,26 +568,26 @@ void loop(){
 
   // Read potentiometer value at fixed interval
   if (millis() - lastPotRead > POT_READ_RATE) {
-    int oldVol = spotifyConn.song.volume;
-    spotifyConn.song.volume = 100 * (analogRead(POT) / (float) 1023);
+    int newVol = 100 * (analogRead(POT) / (float) 1023);
 
     // Account for pot wobble
-    if (abs(oldVol - spotifyConn.song.volume) > 2) {
+    if (abs(spotifyConn.song.volume - newVol) > 2) {
       lastPotChange = millis();
+      spotifyConn.song.volume = newVol;
     }
 
     lastPotRead = millis();
   }
 
   // Only send api POST when pot hasnt changed for a while
-  if (lastPotChange != 0 && millis() - 3000 < lastPotChange) {
+  if (lastPotChange != 0 && millis() - lastPotChange > 3000) {
     lastPotChange = 0;
     spotifyConn.updateVolume();
   }
 
   // Slowly change amplitude of playback bar wave
   if (playbackBar.amplitudePercent != spotifyConn.song.volume) {
-    int inc = playbackBar.amplitudePercent > spotifyConn.song.volume ? -4 : 4; 
+    int inc = playbackBar.amplitudePercent > spotifyConn.song.volume ? -6 : 6; 
     playbackBar.amplitudePercent += inc;
     playbackBar.amplitudePercent = min(max(0, playbackBar.amplitudePercent), 100);
   }

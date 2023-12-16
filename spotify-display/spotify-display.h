@@ -8,7 +8,7 @@
 #define REQUEST_RATE  20000      // ms
 #define IMG_PATH      "/img.jpg"
 #define PLAY_BAR_Y    300
-#define DRAW_RATE     100        // ms
+#define DRAW_RATE     50        // ms
 
 // #define DEBUG         1
 
