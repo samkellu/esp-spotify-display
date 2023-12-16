@@ -1,31 +1,19 @@
 #include "DFRobot_GDL.h"
 #include "credentials.h"
-#include "webpage.h"
+#include "spotify-display.h"
+#include "LittleFS.h"
 #include <ESP8266WiFi.h> 
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
 #include <TJpg_Decoder.h>
-
 #include <ArduinoJson.h>
 #include <base64.h>
-#include "LittleFS.h"
-
-#define POT           A0
-#define POT_READ_RATE 400 //ms
-#define TFT_CS        5  // D6
-#define TFT_RST       2  // D5
-#define TFT_DC        15 // D4
-#define TFT_WIDTH     240
-#define TFT_HEIGHT    320
-#define REQUEST_RATE  20000 // ms
-#define IMG_PATH      "/img.jpg"
-#define PLAY_BAR_Y    300
 
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 
 class PlaybackBar {
   private:
-    bool playing = 0;
+    bool playing = 1;
     bool playStateFlag = 0;
     uint16_t color;
     int x, y;
@@ -33,10 +21,9 @@ class PlaybackBar {
     float period;
     int amplitude;
     int prevBound = -1;
-    uint32_t prevTime = 0;
     uint32_t curTime = 0;
     int prevAmplitude;
-    int speed = 1;
+    uint32_t lastDraw = 0;
 
   public:
     int amplitudePercent;
@@ -54,14 +41,16 @@ class PlaybackBar {
     }
 
     void draw() {
-      if (!playing && !playStateFlag) {
+      if (millis() - lastDraw < DRAW_RATE || (!playing && !playStateFlag)) {
         return;
       }
 
-      prevTime = curTime;
-      curTime++;
+      lastDraw = millis();
       int curAmplitude = amplitude * (amplitudePercent / (float) 100);
       int bound = x + width * (progress / (float) duration);
+      uint32_t prevTime = curTime;
+      curTime++;
+
       // Stop playing
       if (!playStateFlag && playing) {
 
@@ -127,15 +116,6 @@ class SpotifyConn {
     String accessToken;
     String refreshToken;
 
-    int getContentLength() {
-      if (!client.find("Content-Length:")) {
-        return -1;
-      }
-
-      int contentLength = client.parseInt();
-      return contentLength;
-    }
-
   public:
     SongInfo song;
     bool accessTokenSet = false;
@@ -147,15 +127,20 @@ class SpotifyConn {
 
     // Connects to the network specified in credentials.h
     void connect(const char* ssid, const char* passphrase) {
-      Serial.print(F("Attempting connection to "));
-      Serial.println(ssid);
+      #ifdef DEBUG
+        Serial.print(F("Attempting connection to "));
+        Serial.println(ssid);
+      #endif
+
       WiFi.begin(ssid, passphrase);
       while ((WiFi.status() != WL_CONNECTED)) {
         delay(200);
       }
 
-      Serial.print(F("Successfully connected to "));
-      Serial.println(ssid);
+      #ifdef DEBUG
+        Serial.print(F("Successfully connected to "));
+        Serial.println(ssid);
+      #endif
     }
 
     bool getAuth(bool refresh, String code) {
@@ -164,7 +149,9 @@ class SpotifyConn {
       const int port    = 443;
 
       if (!client.connect(host, port)) {
-        Serial.println(F("Connection failed!"));
+        #ifdef DEBUG
+          Serial.println(F("Connection failed!"));
+        #endif
         return false;
       }
 
@@ -172,12 +159,16 @@ class SpotifyConn {
       yield();
 
       String auth = F("Basic ") + base64::encode(String(CLIENT) + F(":") + String(CLIENT_SECRET));
-      String body = F("grant_type=authorization_code&code=") + code + 
-                    F("&redirect_uri=http://") + WiFi.localIP().toString() + F("/callback");
+      String body;
 
       if (refresh) {
         body = F("grant_type=refresh_token&refresh_token=") + refreshToken;
+      
+      } else {
+        body = F("grant_type=authorization_code&code=") + code + 
+               F("&redirect_uri=http://") + WiFi.localIP().toString() + F("/callback");
       }
+
       String req  = F("POST ") + url + F(" HTTP/1.0\r\nHost: ") + 
                     host + F("\r\nContent-Length: ") + String(body.length()) +
                     F("\r\nContent-Type: application/x-www-form-urlencoded\r\n") +
@@ -192,9 +183,11 @@ class SpotifyConn {
       DeserializationError err = deserializeJson(doc, json);
 
       if (err) {
-        Serial.print(F("Deserialisation failed for string: "));
-        Serial.println(json);
-        Serial.println(err.f_str());
+        #ifdef DEBUG
+          Serial.print(F("Deserialisation failed for string: "));
+          Serial.println(json);
+          Serial.println(err.f_str());
+        #endif
         return false;
       }
 
@@ -213,7 +206,9 @@ class SpotifyConn {
       const int port    = 443;
 
       if (!client.connect(host, port)) {
-        Serial.println(F("Connection failed!"));
+        #ifdef DEBUG
+          Serial.println(F("Connection failed!"));
+        #endif
         return false;
       }
 
@@ -229,13 +224,16 @@ class SpotifyConn {
       String status = ln.substring(start, end);
 
       if (strcmp(status.c_str(), "200") != 0) {
-        Serial.print(F("An error occurred: HTTP "));
-        Serial.println(status);
+        #ifdef DEBUG
+          Serial.println(F("An error occurred: HTTP ") + status);
+        #endif
         return false;
       }
 
       if (!client.find("\r\n\r\n")) {
-        Serial.println(F("Invalid response from server."));
+        #ifdef DEBUG
+          Serial.println(F("Invalid response from server."));
+        #endif
         return false;
       }
 
@@ -262,15 +260,12 @@ class SpotifyConn {
 
       DeserializationError err = deserializeJson(doc, client, DeserializationOption::Filter(filter));
       if (err) {
-        Serial.print(F("Deserialisation failed"));
-        Serial.println(err.f_str());
+        #ifdef DEBUG
+          Serial.print(F("Deserialisation failed"));
+          Serial.println(err.f_str());
+        #endif
         return false;
       }
-
-      // #define DEBUG
-      // #ifdef DEBUG
-      // serializeJsonPretty(doc, Serial);
-      // #endif
 
       JsonObject device = doc["device"];
       JsonObject item   = doc["item"];
@@ -306,7 +301,9 @@ class SpotifyConn {
       const int port    = 443;
 
       if (!client.connect(host, port)) {
-        Serial.println(F("Connection failed!"));
+        #ifdef DEBUG
+          Serial.println(F("Connection failed!"));
+        #endif
         return false;
       }
 
@@ -317,7 +314,9 @@ class SpotifyConn {
                    host + F("\r\nCache-Control: no-cache\r\n");
 
       if (client.println(req) == 0) {
-        Serial.println("Failed to send request...");
+        #ifdef DEBUG
+          Serial.println(F("Failed to send request..."));
+        #endif
         return false;
       }
 
@@ -327,22 +326,34 @@ class SpotifyConn {
       String status = ln.substring(start, end);
 
       if (strcmp(status.c_str(), "200") != 0) {
-        Serial.print(F("An error occurred: HTTP "));
-        Serial.println(status);
+        #ifdef DEBUG
+          Serial.println(F("An error occurred: HTTP ") + status);
+        #endif
         client.stop();
         return false;
       }
 
-      int numBytes = getContentLength();
+      if (!client.find("Content-Length:")) {
+        #ifdef DEBUG
+          Serial.println(F("Response had not content-length header."));
+        #endif
+        return false;
+      }
+
+      int numBytes = client.parseInt();
       if (!client.find("\r\n\r\n")) {
-        Serial.println(F("Invalid response from server."));
+        #ifdef DEBUG
+          Serial.println(F("Invalid response from server."));
+        #endif
         client.stop();
         return false;
       }
 
       File f = LittleFS.open(IMG_PATH, "w+");
       if (!f) {
-        Serial.println("Failed to write image to file...");
+        #ifdef DEBUG
+          Serial.println(F("Failed to write image to file..."));
+        #endif
         return false;
       }
 
@@ -363,7 +374,9 @@ class SpotifyConn {
       }
 
       f.close();
-      Serial.printf("Wrote to file %d/%d bytes\n", offset, numBytes);
+      #ifdef DEBUG
+        Serial.printf("Wrote to file %d/%d bytes\n", offset, numBytes);
+      #endif
       client.stop();
       return true;
     }
@@ -374,7 +387,9 @@ class SpotifyConn {
       const int port    = 443;
 
       if (!client.connect(host, port)) {
-        Serial.println(F("Connection failed!"));
+        #ifdef DEBUG
+          Serial.println(F("Connection failed!"));
+        #endif
         return false;
       }
 
@@ -382,14 +397,16 @@ class SpotifyConn {
       yield();
 
       String auth = F("Bearer ") + accessToken;
-      String req = F("PUT ") + url +
-                   F(" HTTP/1.0\r\nHost: ") + host +
-                   F("\r\nAuthorization: ") + auth +
-                   F("\r\nContent-Length: 0") + 
-                   F("\r\nConnection: close\r\n\r\n");
+      String req  = F("PUT ") + url +
+                    F(" HTTP/1.0\r\nHost: ") + host +
+                    F("\r\nAuthorization: ") + auth +
+                    F("\r\nContent-Length: 0") + 
+                    F("\r\nConnection: close\r\n\r\n");
 
       if (client.println(req) == 0) {
-        Serial.println("Failed to send request...");
+        #ifdef DEBUG
+          Serial.println(F("Failed to send request..."));
+        #endif
         return false;
       }
 
@@ -399,8 +416,9 @@ class SpotifyConn {
       String status = ln.substring(start, end);
 
       if (strcmp(status.c_str(), "204") != 0) {
-        Serial.print(F("An error occurred: HTTP "));
-        Serial.println(status);
+        #ifdef DEBUG
+          Serial.println(F("An error occurred: HTTP ") + status);
+        #endif
         return false;
       }
 
@@ -409,6 +427,7 @@ class SpotifyConn {
 };
 
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+  // Stop drawing if out of bounds
   if (y >= TFT_HEIGHT) {
     return false;
   }
@@ -422,10 +441,10 @@ SpotifyConn spotifyConn;
 ESP8266WebServer server(80);
 
 void webServerHandleRoot() {
-  String header = String("https://accounts.spotify.com/authorize?client_id=") + CLIENT +
-                  "&response_type=code&redirect_uri=http://192.168.1.15/callback"
-                  "&scope=%20user-modify-playback-state%20user-read-currently-playing%20"
-                  "user-read-playback-state";
+  String header = F("https://accounts.spotify.com/authorize?client_id=") + String(CLIENT) +
+                  F("&response_type=code&redirect_uri=http://") + WiFi.localIP().toString() +
+                  F("/callback&scope=%20user-modify-playback-state%20user-read-currently-playing%20") +
+                  F("user-read-playback-state");
 
   server.sendHeader("Location", header, true);
   server.send(302, "text/html", "");
@@ -434,38 +453,52 @@ void webServerHandleRoot() {
 void webServerHandleCallback() {
   if (server.arg("code") != "") {
     if (spotifyConn.getAuth(false, server.arg("code"))) {
-      Serial.println(F("Successfully got access tokens!"));
-      server.send(200, "text/html", "Login complete! you may close this tab.\r\n");
+      #ifdef DEBUG
+        Serial.println(F("Successfully got access tokens!"));
+      #endif
+      server.send(200, "text/html", F("Login complete! you may close this tab.\r\n"));
     
     } else {
-      server.send(200, "text/html", "Authentication failed... Please try again :(\r\n");
+      server.send(200, "text/html", F("Authentication failed... Please try again :(\r\n"));
     }
 
   } else {
-    Serial.println(F("An error occurred. Server provided no code arg."));
+    #ifdef DEBUG
+      Serial.println(F("An error occurred. Server provided no code arg."));
+    #endif
   }
 }
 
-uint32_t lastRequest = 0;
-uint32_t lastPotRead = 0;
+uint32_t lastRequest   = 0;
+uint32_t lastPotRead   = 0;
 uint32_t lastPotChange = 0;
-bool imageIsSet = false;
-void setup() {
+bool imageIsSet        = false;
 
-  Serial.begin(115200);
+void setup() {
+  #ifdef DEBUG
+    Serial.begin(115200);
+  #endif
+
+  // Initialise LittleFS
   if (!LittleFS.begin()) {
-    Serial.println("Failed to initialise file system.");
+    #ifdef DEBUG
+      Serial.println(F("Failed to initialise file system."));
+    #endif
     while (1) yield();
   }
 
+  // Initialise tft display
   screen.begin();
   screen.fillScreen(COLOR_RGB565_BLACK);
+
+  // Initialise webserver for spotify OAuth
   server.on("/", webServerHandleRoot);
   server.on("/callback", webServerHandleCallback);
   server.begin();
-  spotifyConn.connect(SSID, PASSPHRASE);
-  TJpgDec.setJpgScale(2);
+
   TJpgDec.setCallback(drawBmp);
+  TJpgDec.setJpgScale(2);
+  spotifyConn.connect(SSID, PASSPHRASE);
 }
 
 void loop(){
@@ -475,7 +508,7 @@ void loop(){
   if (!spotifyConn.accessTokenSet) {
     screen.setCursor(0,0);
     screen.setTextSize(2);
-    screen.printf("Visit \nhttp://%s\nto log in :)\n", WiFi.localIP().toString());
+    screen.print(F("Visit \nhttp://") + WiFi.localIP().toString() + F("\nto log in :)\n"));
     return;
   }
 
@@ -488,7 +521,9 @@ void loop(){
     lastRequest = millis();
     if (spotifyConn.getCurrentlyPlaying()) {
       
-      Serial.println(F("Polled API"));
+      #ifdef DEBUG
+        Serial.println(F("Polled API"));
+      #endif
       yield();
 
       SongInfo song = spotifyConn.song;
@@ -507,10 +542,9 @@ void loop(){
         screen.setTextSize(1);
         screen.println(song.artistName);
 
-        // Close playback bar wave
+        // Close playback bar wave when switching songs
         playbackBar.setPlayState(false);
         playbackBar.draw();
-
         imageIsSet = false;
       }
 
@@ -522,7 +556,7 @@ void loop(){
 
       // In the event of failure, continues fetching until success
       if (!imageIsSet) {
-        // get image
+        // Get and draw album art
         if (spotifyConn.getAlbumArt()) {
           yield();
           TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
@@ -531,14 +565,18 @@ void loop(){
       }
     
     } else {
-      Serial.println(F("Failed to fetch..."));
+      #ifdef DEBUG
+        Serial.println(F("Failed to fetch..."));
+      #endif
     }
 
   } else {
+    // Interpolate playback bar progress between api calls
     int interpolatedTime = (int) (millis() - lastRequest + spotifyConn.song.progressMs);
     playbackBar.progress = min(interpolatedTime, spotifyConn.song.durationMs);
   }
 
+  // Read potentiometer value at fixed interval
   if (millis() - lastPotRead > POT_READ_RATE) {
     int oldVol = spotifyConn.song.volume;
     spotifyConn.song.volume = 100 * (analogRead(POT) / (float) 1023);
@@ -551,11 +589,13 @@ void loop(){
     lastPotRead = millis();
   }
 
+  // Only send api POST when pot hasnt changed for a while
   if (lastPotChange != 0 && millis() - 3000 < lastPotChange) {
     lastPotChange = 0;
     spotifyConn.updateVolume();
   }
 
+  // Slowly change amplitude of playback bar wave
   if (playbackBar.amplitudePercent != spotifyConn.song.volume) {
     int inc = playbackBar.amplitudePercent > spotifyConn.song.volume ? -4 : 4; 
     playbackBar.amplitudePercent += inc;
