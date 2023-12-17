@@ -191,8 +191,6 @@ bool getAuth(bool refresh, String code) {
 void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
 
   if (readyState != readyStateDone) return;
-  Serial.println(request->responseHTTPcode());
-  Serial.println("Whot");
   if (request->responseHTTPcode() != 200) return;
 
   String json = request->responseText();
@@ -227,7 +225,7 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
     return;
   }
 
-  String prevId = song.id;
+  String prevId     = song.id;
   JsonObject device = doc["device"];
   JsonObject item   = doc["item"];
   JsonArray images  = item["album"]["images"];
@@ -253,6 +251,7 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
     }
   }
 
+  yield();
   readFlag = true;
   newSong = song.id != prevId; 
 }
@@ -454,6 +453,7 @@ void webServerHandleCallback() {
 }
 
 uint32_t lastRequest   = 0;
+uint32_t lastResponse  = 0;
 uint32_t lastPotRead   = 0;
 uint32_t lastPotChange = 0;
 bool imageIsSet        = false;
@@ -514,6 +514,9 @@ void loop(){
   //     SongInfo song = song;
 
   if (readFlag) {
+    lastResponse = millis();
+    
+    readFlag = false;
     if (newSong) {
 
       // Clear album art and song/artist text
@@ -540,7 +543,6 @@ void loop(){
     // Draw progress indicator to correct location before image loads
     playbackBar.draw();
 
-    readFlag = false;
   
 
     // // In the event of failure, continues fetching until success
@@ -557,7 +559,7 @@ void loop(){
 
   } else {
     // Interpolate playback bar progress between api calls
-    int interpolatedTime = (int) (millis() - lastRequest + song.progressMs);
+    int interpolatedTime = (int) (millis() - lastResponse + song.progressMs);
     playbackBar.progress = min(interpolatedTime, song.durationMs);
   }
 
