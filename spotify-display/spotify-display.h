@@ -1,3 +1,19 @@
+#include "DFRobot_GDL.h"
+#include "credentials.h"
+#include "LittleFS.h"
+#include <TJpg_Decoder.h>
+#include <ArduinoJson.h>
+#include <base64.h>
+
+#if defined(ESP8266)
+  #include <ESP8266WiFi.h> 
+  #include <ESP8266HTTPClient.h>
+  #include <ESP8266WebServer.h>
+#elif defined(ESP32)
+  #include <AsyncHTTPSRequest_Generic.h>
+  #include <WiFi.h>
+#endif
+
 #define POT           A0
 #define POT_READ_RATE 400        //ms
 #define TFT_CS        5          // D6

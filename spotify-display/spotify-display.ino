@@ -1,13 +1,4 @@
-#include "DFRobot_GDL.h"
-#include "credentials.h"
 #include "spotify-display.h"
-#include "LittleFS.h"
-#include <ESP8266WiFi.h> 
-#include <ESP8266HTTPClient.h>
-#include <ESP8266WebServer.h>
-#include <TJpg_Decoder.h>
-#include <ArduinoJson.h>
-#include <base64.h>
 
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 
@@ -112,7 +103,6 @@ class PlaybackBar {
 class SpotifyConn {
   private:
     BearSSL::WiFiClientSecure client;
-    HTTPClient httpsClient;
     String accessToken;
     String refreshToken;
 
@@ -417,6 +407,7 @@ class SpotifyConn {
     }
 };
 
+
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   // Stop drawing if out of bounds
   if (y >= TFT_HEIGHT) {
@@ -429,7 +420,12 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
 
 PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, COLOR_RGB565_WHITE);
 SpotifyConn spotifyConn;
-ESP8266WebServer server(80);
+
+#if defined(ESP8266)
+  ESP8266WebServer server(80);
+#elif defined(ESP32)
+  WebServer server(80);
+#endif
 
 void webServerHandleRoot() {
   String header = F("https://accounts.spotify.com/authorize?client_id=") + String(CLIENT) +
