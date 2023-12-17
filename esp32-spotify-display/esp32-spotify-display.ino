@@ -106,6 +106,10 @@ String refreshToken;
 SongInfo song;
 bool accessTokenSet = false;
 int expiry;
+bool readFlag = false;
+bool newSong = false;
+String prevId = "";
+
 
 // Connects to the network specified in credentials.h
 void connect(const char* ssid, const char* passphrase) {
@@ -127,42 +131,36 @@ void connect(const char* ssid, const char* passphrase) {
 
 void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
 
-  Serial.println("Done");
+  if (readyState != readyStateDone) return;
+  if (request->responseHTTPcode() != 200) return;
 
-  if (readyState == readyStateDone) {
-    Serial.println(request->responseHTTPcode());
-    Serial.println(request->responseText());
-    if (request->responseHTTPcode() == 200) {
-      DynamicJsonDocument doc(1024);
-      String json = request->responseText();
+  DynamicJsonDocument doc(1024);
+  String json = request->responseText();
+  Serial.println(json);
+  DeserializationError err = deserializeJson(doc, json);
+
+  if (err) {
+    #ifdef DEBUG
+      Serial.print("Deserialisation failed for string: ");
       Serial.println(json);
-      DeserializationError err = deserializeJson(doc, json);
-
-      if (err) {
-        #ifdef DEBUG
-          Serial.print("Deserialisation failed for string: ");
-          Serial.println(json);
-          Serial.println(err.f_str());
-        #endif
-        return;
-      }
-
-      // TODO check if these keys are present first
-      accessToken = doc["access_token"].as<String>();
-      refreshToken = doc["refresh_token"].as<String>();
-      expiry = millis() + 1000 * doc["expires_in"].as<int>();
-
-      accessTokenSet = true;
-    }
-  } else {
-
-    Serial.println("FF");
+      Serial.println(err.f_str());
+    #endif
+    return;
   }
+
+  // TODO check if these keys are present first
+  accessToken = doc["access_token"].as<String>();
+  refreshToken = doc["refresh_token"].as<String>();
+  expiry = millis() + 1000 * doc["expires_in"].as<int>();
+
+  Serial.println(accessToken);
+  accessTokenSet = true;
 }
 
 bool getAuth(bool refresh, String code) {
 
-  https.onReadyStateChange(authCB);
+  if (https.readyState() != readyStateUnsent && https.readyState() != readyStateDone) return false;
+
 
   if (https.open("POST", "https://accounts.spotify.com/api/token")) {
     String body;
@@ -178,6 +176,7 @@ bool getAuth(bool refresh, String code) {
     String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
     https.setReqHeader("Content-Type", "application/x-www-form-urlencoded");
     https.setReqHeader("Authorization", auth.c_str());
+    https.onReadyStateChange(authCB);
     https.send(body);
     return true;
 
@@ -188,115 +187,96 @@ bool getAuth(bool refresh, String code) {
     #endif
     return false;
   }
-
-
-  // String req  = F("POST ") + url + F(" HTTP/1.0\r\nHost: ") + 
-  //               host + F("\r\nContent-Length: ") + String(body.length()) +
-  //               F("\r\nContent-Type: application/x-www-form-urlencoded\r\n") +
-  //               F("Authorization: ") + auth + F("\r\nConnection: close\r\n\r\n") + 
-  //               body;
-
-  // client.print(req);
-  // client.readStringUntil('{');
-
-  
-  // return true;
 }
 
-//     bool getCurrentlyPlaying() {
-//       const String host = F("api.spotify.com");
-//       const String url  = F("/v1/me/player");
-//       const int port    = 443;
+void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
 
-//       if (!client.connect(host, port)) {
-//         #ifdef DEBUG
-//           Serial.println(F("Connection failed!"));
-//         #endif
-//         return false;
-//       }
+  if (readyState != readyStateDone) return;
+  Serial.println(request->responseHTTPcode());
+  Serial.println("Whot");
+  if (request->responseHTTPcode() != 200) return;
 
-//       String auth = F("Bearer ") + accessToken;
-//       String req  = F("GET ") + url + F(" HTTP/1.0\r\nHost: ") +
-//                     host + F("\r\nAuthorization: ") +
-//                     auth + F("\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"); 
+  String json = request->responseText();
 
-//       client.print(req);
-//       String ln = client.readStringUntil('\r');
-//       int start     = ln.indexOf(' ') + 1;
-//       int end       = ln.indexOf(' ', start);
-//       String status = ln.substring(start, end);
+  DynamicJsonDocument doc(1024);
+  StaticJsonDocument<300> filter;
+  filter["progress_ms"] = true;
+  filter["is_playing"]  = true;
 
-//       if (strcmp(status.c_str(), "200") != 0) {
-//         #ifdef DEBUG
-//           Serial.println(F("An error occurred: HTTP ") + status);
-//         #endif
-//         return false;
-//       }
+  JsonObject filter_device            = filter.createNestedObject("device");
+  JsonObject filter_item              = filter.createNestedObject("item");
+  JsonObject filter_item_album        = filter_item.createNestedObject("album");
+  JsonObject filter_item_album_images = filter_item_album["images"].createNestedObject();
 
-//       if (!client.find("\r\n\r\n")) {
-//         #ifdef DEBUG
-//           Serial.println(F("Invalid response from server."));
-//         #endif
-//         return false;
-//       }
+  filter_device["volume_percent"]    = true;
+  filter_device["name"]              = true;
+  filter_item["name"]                = true;
+  filter_item["duration_ms"]         = true;
+  filter_item["artists"][0]["name"]  = true;
+  filter_item["id"]                  = true;
+  filter_item_album["name"]          = true;
+  filter_item_album_images["url"]    = true;
+  filter_item_album_images["width"]  = true;
+  filter_item_album_images["height"] = true;
 
-//       DynamicJsonDocument doc(1024);
-//       StaticJsonDocument<300> filter;
-//       filter["progress_ms"] = true;
-//       filter["is_playing"]  = true;
+  DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
+  if (err) {
+    #ifdef DEBUG
+      Serial.print(F("Deserialisation failed"));
+      Serial.println(err.f_str());
+    #endif
+    return;
+  }
 
-//       JsonObject filter_device            = filter.createNestedObject("device");
-//       JsonObject filter_item              = filter.createNestedObject("item");
-//       JsonObject filter_item_album        = filter_item.createNestedObject("album");
-//       JsonObject filter_item_album_images = filter_item_album["images"].createNestedObject();
+  JsonObject device = doc["device"];
+  JsonObject item   = doc["item"];
+  JsonArray images  = item["album"]["images"];
+  song.progressMs   = doc["progress_ms"].as<int>();
+  song.isPlaying    = doc["is_playing"].as<bool>();
+  song.volume       = device["volume_percent"].as<int>();
+  song.deviceName   = device["name"].as<String>();
+  song.id           = item["id"].as<String>();
+  song.songName     = item["name"].as<String>();
+  song.albumName    = item["album"]["name"].as<String>();
+  song.artistName   = item["artists"][0]["name"].as<String>();
+  song.durationMs   = item["duration_ms"].as<int>();
 
-//       filter_device["volume_percent"]    = true;
-//       filter_device["name"]              = true;
-//       filter_item["name"]                = true;
-//       filter_item["duration_ms"]         = true;
-//       filter_item["artists"][0]["name"]  = true;
-//       filter_item["id"]                  = true;
-//       filter_item_album["name"]          = true;
-//       filter_item_album_images["url"]    = true;
-//       filter_item_album_images["width"]  = true;
-//       filter_item_album_images["height"] = true;
+  for (int i = 0; i < images.size(); i++) {
+    int height = images[i]["height"].as<int>();
+    int width  = images[i]["width"].as<int>();
 
-//       DeserializationError err = deserializeJson(doc, client, DeserializationOption::Filter(filter));
-//       if (err) {
-//         #ifdef DEBUG
-//           Serial.print(F("Deserialisation failed"));
-//           Serial.println(err.f_str());
-//         #endif
-//         return false;
-//       }
+    if (height <= 300 && width <= 300) {
+      song.height = height;
+      song.width  = width;
+      song.imgUrl = images[i]["url"].as<String>();
+      break;
+    }
+  }
 
-//       JsonObject device = doc["device"];
-//       JsonObject item   = doc["item"];
-//       JsonArray images  = item["album"]["images"];
-//       song.progressMs   = doc["progress_ms"].as<int>();
-//       song.isPlaying    = doc["is_playing"].as<bool>();
-//       song.volume       = device["volume_percent"].as<int>();
-//       song.deviceName   = device["name"].as<String>();
-//       song.id           = item["id"].as<String>();
-//       song.songName     = item["name"].as<String>();
-//       song.albumName    = item["album"]["name"].as<String>();
-//       song.artistName   = item["artists"][0]["name"].as<String>();
-//       song.durationMs   = item["duration_ms"].as<int>();
+  readFlag = true;
+  newSong = song.id != prevId; 
+}
 
-//       for (int i = 0; i < images.size(); i++) {
-//         int height = images[i]["height"].as<int>();
-//         int width  = images[i]["width"].as<int>();
+bool getCurrentlyPlaying() {
 
-//         if (height <= 300 && width <= 300) {
-//           song.height = height;
-//           song.width  = width;
-//           song.imgUrl = images[i]["url"].as<String>();
-//           break;
-//         }
-//       }
+  if (https.readyState() != readyStateUnsent && https.readyState() != readyStateDone) return false;
+  if (https.open("GET", "https://api.spotify.com/v1/me/player")) {
 
-//       return true;
-//     }
+    String auth = "Bearer " + accessToken;
+    https.setReqHeader("Cache-Control", "no-cache");
+    https.setReqHeader("Authorization", auth.c_str());
+    https.onReadyStateChange(currentlyPlayingCB);
+    https.send();
+    return true;
+
+  } else {
+
+    #ifdef DEBUG
+      Serial.println("Connection failed!");
+    #endif
+    return false;
+  }
+}
 
 //     bool getAlbumArt() {
 //       const String host = F("i.scdn.co");
@@ -517,77 +497,78 @@ void loop(){
     return;
   }
 
-  // if (millis() > spotifyConn.expiry) {
-  //   spotifyConn.getAuth(true, "");
-  // }
+  if (millis() > expiry) {
+    getAuth(true, "");
+  }
 
-  // if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
-  //   String prevId = spotifyConn.song.id;
-  //   lastRequest = millis();
-  //   if (spotifyConn.getCurrentlyPlaying()) {
-      
+  if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
+    lastRequest = millis();
+    Serial.println("polled");
+    getCurrentlyPlaying();
+  }
+
   //     #ifdef DEBUG
   //       Serial.println(F("Polled API"));
   //     #endif
 
-  //     SongInfo song = spotifyConn.song;
+  //     SongInfo song = song;
 
-  //     // Base off song id instead
-  //     if (song.id != prevId) {
+  if (readFlag) {
+    if (newSong) {
 
-  //       // Clear album art and song/artist text
-  //       screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
+      // Clear album art and song/artist text
+      screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
 
-  //       // Rewrite song/artist text
-  //       screen.setCursor(10,240);
-  //       screen.setTextSize(2);
-  //       screen.setTextWrap(false);
-  //       screen.println(song.songName);
-  //       screen.setTextSize(1);
-  //       screen.println(song.artistName);
+      // Rewrite song/artist text
+      screen.setCursor(10,240);
+      screen.setTextSize(2);
+      screen.setTextWrap(false);
+      screen.println(song.songName);
+      screen.setTextSize(1);
+      screen.println(song.artistName);
 
-  //       // Close playback bar wave when switching songs
-  //       playbackBar.setPlayState(false);
-  //       playbackBar.draw();
-  //       imageIsSet = false;
-  //     }
+      // Close playback bar wave when switching songs
+      playbackBar.setPlayState(false);
+      playbackBar.draw();
+      imageIsSet = false;
+      newSong = false;
+    }
 
-  //     playbackBar.duration = song.durationMs;
-  //     playbackBar.progress = song.progressMs;
-  //     playbackBar.setPlayState(song.isPlaying);
-  //     // Draw progress indicator to correct location before image loads
-  //     playbackBar.draw();
+    playbackBar.duration = song.durationMs;
+    playbackBar.progress = song.progressMs;
+    playbackBar.setPlayState(song.isPlaying);
+    // Draw progress indicator to correct location before image loads
+    playbackBar.draw();
 
-  //     // In the event of failure, continues fetching until success
-  //     if (!imageIsSet) {
-  //       // Get and draw album art
-  //       yield();
-  //       if (spotifyConn.getAlbumArt()) {
-  //         TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
-  //         imageIsSet = true;
-  //       }
-  //     }
-    
-  //   } else {
-  //     #ifdef DEBUG
-  //       Serial.println(F("Failed to fetch..."));
-  //     #endif
-  //   }
+    readFlag = false;
+  
 
-  // } else {
-  //   // Interpolate playback bar progress between api calls
-  //   int interpolatedTime = (int) (millis() - lastRequest + spotifyConn.song.progressMs);
-  //   playbackBar.progress = min(interpolatedTime, spotifyConn.song.durationMs);
-  // }
+    // // In the event of failure, continues fetching until success
+    // if (!imageIsSet) {
+    //   // Get and draw album art
+    //   yield();
+    //   if (getAlbumArt()) {
+    //     TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
+    //     imageIsSet = true;
+    //   }
+    // }
+  
+ 
+
+  } else {
+    // Interpolate playback bar progress between api calls
+    int interpolatedTime = (int) (millis() - lastRequest + song.progressMs);
+    playbackBar.progress = min(interpolatedTime, song.durationMs);
+  }
 
   // // Read potentiometer value at fixed interval
   // if (millis() - lastPotRead > POT_READ_RATE) {
   //   int newVol = 100 * (analogRead(POT) / (float) 1023);
 
   //   // Account for pot wobble
-  //   if (abs(spotifyConn.song.volume - newVol) > 2) {
+  //   if (abs(song.volume - newVol) > 2) {
   //     lastPotChange = millis();
-  //     spotifyConn.song.volume = newVol;
+  //     song.volume = newVol;
   //   }
 
   //   lastPotRead = millis();
@@ -596,15 +577,15 @@ void loop(){
   // // Only send api POST when pot hasnt changed for a while
   // if (lastPotChange != 0 && millis() - lastPotChange > 3000) {
   //   lastPotChange = 0;
-  //   spotifyConn.updateVolume();
+  //   updateVolume();
   // }
 
-  // // Slowly change amplitude of playback bar wave
-  // if (playbackBar.amplitudePercent != spotifyConn.song.volume) {
-  //   int inc = playbackBar.amplitudePercent > spotifyConn.song.volume ? -6 : 6; 
-  //   playbackBar.amplitudePercent += inc;
-  //   playbackBar.amplitudePercent = min(max(0, playbackBar.amplitudePercent), 100);
-  // }
+  // Slowly change amplitude of playback bar wave
+  if (playbackBar.amplitudePercent != song.volume) {
+    int inc = playbackBar.amplitudePercent > song.volume ? -6 : 6; 
+    playbackBar.amplitudePercent += inc;
+    playbackBar.amplitudePercent = min(max(0, playbackBar.amplitudePercent), 100);
+  }
 
-  // playbackBar.draw();
+  playbackBar.draw();
 }

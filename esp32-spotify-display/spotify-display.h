@@ -10,6 +10,8 @@
   #include <ESP8266HTTPClient.h>
   #include <ESP8266WebServer.h>
 #elif defined(ESP32)
+  #define _ASYNC_TCP_SSL_LOGLEVEL_    1
+  #define _ASYNC_HTTPS_LOGLEVEL_      1
   #include <AsyncHTTPSRequest_Generic.h>
   #include <WiFi.h>
   #include <WebServer.h>
@@ -17,9 +19,9 @@
 
 #define POT           A0
 #define POT_READ_RATE 400        //ms
-#define TFT_CS        5          // D6
-#define TFT_RST       2          // D5
-#define TFT_DC        15         // D4
+#define TFT_CS        15          // D6
+#define TFT_RST       2         // D5
+#define TFT_DC        4         // D4
 #define TFT_WIDTH     240
 #define TFT_HEIGHT    320
 #define REQUEST_RATE  20000      // ms
