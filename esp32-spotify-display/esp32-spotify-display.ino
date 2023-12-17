@@ -100,7 +100,8 @@ class PlaybackBar {
 };
 
 
-AsyncHTTPSRequest https;
+AsyncHTTPSRequest httpsAuth;
+AsyncHTTPSRequest httpsCurrent;
 String accessToken;
 String refreshToken;
 SongInfo song;
@@ -108,8 +109,6 @@ bool accessTokenSet = false;
 int expiry;
 bool readFlag = false;
 bool newSong = false;
-String prevId = "";
-
 
 // Connects to the network specified in credentials.h
 void connect(const char* ssid, const char* passphrase) {
@@ -159,10 +158,10 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
 
 bool getAuth(bool refresh, String code) {
 
-  if (https.readyState() != readyStateUnsent && https.readyState() != readyStateDone) return false;
+  if (httpsAuth.readyState() != readyStateUnsent && httpsAuth.readyState() != readyStateDone) return false;
 
 
-  if (https.open("POST", "https://accounts.spotify.com/api/token")) {
+  if (httpsAuth.open("POST", "https://accounts.spotify.com/api/token")) {
     String body;
 
     if (refresh) {
@@ -174,10 +173,10 @@ bool getAuth(bool refresh, String code) {
     }
 
     String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
-    https.setReqHeader("Content-Type", "application/x-www-form-urlencoded");
-    https.setReqHeader("Authorization", auth.c_str());
-    https.onReadyStateChange(authCB);
-    https.send(body);
+    httpsAuth.setReqHeader("Content-Type", "application/x-www-form-urlencoded");
+    httpsAuth.setReqHeader("Authorization", auth.c_str());
+    httpsAuth.onReadyStateChange(authCB);
+    httpsAuth.send(body);
     return true;
 
   } else {
@@ -228,6 +227,7 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
     return;
   }
 
+  String prevId = song.id;
   JsonObject device = doc["device"];
   JsonObject item   = doc["item"];
   JsonArray images  = item["album"]["images"];
@@ -259,14 +259,14 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
 
 bool getCurrentlyPlaying() {
 
-  if (https.readyState() != readyStateUnsent && https.readyState() != readyStateDone) return false;
-  if (https.open("GET", "https://api.spotify.com/v1/me/player")) {
+  if (httpsCurrent.readyState() != readyStateUnsent && httpsCurrent.readyState() != readyStateDone) return false;
+  if (httpsCurrent.open("GET", "https://api.spotify.com/v1/me/player")) {
 
     String auth = "Bearer " + accessToken;
-    https.setReqHeader("Cache-Control", "no-cache");
-    https.setReqHeader("Authorization", auth.c_str());
-    https.onReadyStateChange(currentlyPlayingCB);
-    https.send();
+    httpsCurrent.setReqHeader("Cache-Control", "no-cache");
+    httpsCurrent.setReqHeader("Authorization", auth.c_str());
+    httpsCurrent.onReadyStateChange(currentlyPlayingCB);
+    httpsCurrent.send();
     return true;
 
   } else {
