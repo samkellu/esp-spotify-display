@@ -102,6 +102,7 @@ class PlaybackBar {
 
 AsyncHTTPSRequest httpsAuth;
 AsyncHTTPSRequest httpsCurrent;
+AsyncHTTPSRequest httpsImg;
 String accessToken;
 String refreshToken;
 SongInfo song;
@@ -109,6 +110,8 @@ bool accessTokenSet = false;
 int expiry;
 bool readFlag = false;
 bool newSong = false;
+bool imageRequested = false;
+bool imageDrawFlag = false;
 
 // Connects to the network specified in credentials.h
 void connect(const char* ssid, const char* passphrase) {
@@ -131,6 +134,7 @@ void connect(const char* ssid, const char* passphrase) {
 void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
 
   if (readyState != readyStateDone) return;
+  Serial.println(request->responseHTTPcode());
   if (request->responseHTTPcode() != 200) return;
 
   DynamicJsonDocument doc(1024);
@@ -265,6 +269,7 @@ bool getCurrentlyPlaying() {
     httpsCurrent.setReqHeader("Cache-Control", "no-cache");
     httpsCurrent.setReqHeader("Authorization", auth.c_str());
     httpsCurrent.onReadyStateChange(currentlyPlayingCB);
+    Serial.println("Real");
     httpsCurrent.send();
     return true;
 
@@ -277,88 +282,58 @@ bool getCurrentlyPlaying() {
   }
 }
 
-//     bool getAlbumArt() {
-//       const String host = F("i.scdn.co");
-//       const String url  = song.imgUrl.substring(17);
-//       const int port    = 443;
+void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
 
-//       if (!client.connect(host, port)) {
-//         #ifdef DEBUG
-//           Serial.println(F("Connection failed!"));
-//         #endif
-//         return false;
-//       }
+  if (readyState != readyStateDone) return;
+  Serial.println("res");  
+  Serial.println(request->responseHTTPcode());
+  if (request->responseHTTPcode() != 200) {
+    imageRequested = false;
+    #ifdef DEBUG
+      Serial.println("An error occurred: HTTP " + request->responseHTTPcode());
+    #endif
+    return;
+  }
 
-//       String req = F("GET ") + url + F(" HTTP/1.0\r\nHost: ") +
-//                    host + F("\r\nCache-Control: no-cache\r\n");
+  File f = LittleFS.open(IMG_PATH, "w+");
+  if (!f) {
+    #ifdef DEBUG
+      Serial.println("Failed to write image to file...");
+    #endif
+    return;
+  }
 
-//       if (client.println(req) == 0) {
-//         #ifdef DEBUG
-//           Serial.println(F("Failed to send request..."));
-//         #endif
-//         return false;
-//       }
+  char* img = request->responseLongText();
+  f.write((uint8_t*) img, strlen(img));
+  f.close();
+  #ifdef DEBUG
+    Serial.println("Wrote image to file");
+  #endif
+  imageDrawFlag = true;
+  return;
+}
 
-//       String ln     = client.readStringUntil('\r');
-//       int start     = ln.indexOf(' ') + 1;
-//       int end       = ln.indexOf(' ', start);
-//       String status = ln.substring(start, end);
 
-//       if (strcmp(status.c_str(), "200") != 0) {
-//         #ifdef DEBUG
-//           Serial.println(F("An error occurred: HTTP ") + status);
-//         #endif
-//         client.stop();
-//         return false;
-//       }
+bool getAlbumArt() {
 
-//       if (!client.find("Content-Length:")) {
-//         #ifdef DEBUG
-//           Serial.println(F("Response had not content-length header."));
-//         #endif
-//         return false;
-//       }
+  if (httpsImg.readyState() != readyStateUnsent && httpsImg.readyState() != readyStateDone) return false;
+  Serial.println(song.imgUrl.c_str());
+  if (httpsImg.open("GET", song.imgUrl.c_str())) {
+    Serial.println("Requestod");
+    httpsImg.onReadyStateChange(albumArtCB);
+    httpsImg.setReqHeader("Cache-Control", "no-cache");
+    httpsImg.send();
+    imageRequested = true;
+    return true;
 
-//       int numBytes = client.parseInt();
-//       if (!client.find("\r\n\r\n")) {
-//         #ifdef DEBUG
-//           Serial.println(F("Invalid response from server."));
-//         #endif
-//         client.stop();
-//         return false;
-//       }
+  } else {
+    #ifdef DEBUG
+      Serial.println("Connection failed!");
+    #endif
+    return false;
+  }
+}
 
-//       File f = LittleFS.open(IMG_PATH, "w+");
-//       if (!f) {
-//         #ifdef DEBUG
-//           Serial.println(F("Failed to write image to file..."));
-//         #endif
-//         return false;
-//       }
-
-//       int offset = 0;
-//       uint8_t buf[128];
-//       while (offset < numBytes) {
-
-//         size_t available = client.available();
-
-//         if (available) {
-//           int bytes = client.readBytes(buf, min(available, sizeof(buf)));
-//           f.write(buf, bytes);
-//           offset += bytes;
-//         }
-
-//         // Reset WDT
-//         yield();
-//       }
-
-//       f.close();
-//       #ifdef DEBUG
-//         Serial.printf("Wrote to file %d/%d bytes\n", offset, numBytes);
-//       #endif
-//       client.stop();
-//       return true;
-//     }
 
 //     bool updateVolume() {
 //       const String host = F("api.spotify.com");
@@ -403,15 +378,15 @@ bool getCurrentlyPlaying() {
 // ;
 
 
-// bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-//   // Stop drawing if out of bounds
-//   if (y >= TFT_HEIGHT) {
-//     return false;
-//   }
+bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+  // Stop drawing if out of bounds
+  if (y >= TFT_HEIGHT) {
+    return false;
+  }
 
-//   screen.drawRGBBitmap(x, y, bitmap, w, h);
-//   return true;
-// }
+  screen.drawRGBBitmap(x, y, bitmap, w, h);
+  return true;
+}
 
 PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, COLOR_RGB565_WHITE);
 
@@ -456,7 +431,6 @@ uint32_t lastRequest   = 0;
 uint32_t lastResponse  = 0;
 uint32_t lastPotRead   = 0;
 uint32_t lastPotChange = 0;
-bool imageIsSet        = false;
 
 void setup() {
   #ifdef DEBUG
@@ -464,12 +438,12 @@ void setup() {
   #endif
 
   // Initialise LittleFS
-  // if (!LittleFS.begin()) {
-  //   #ifdef DEBUG
-  //     Serial.println("Failed to initialise file system.");
-  //   #endif
-  //   while (1) yield();
-  // }
+  if (!LittleFS.begin()) {
+    #ifdef DEBUG
+      Serial.println("Failed to initialise file system.");
+    #endif
+    return;
+  }
 
   // Initialise tft display
   screen.begin();
@@ -482,8 +456,8 @@ void setup() {
   server.on("/callback", webServerHandleCallback);
   server.begin();
 
-  // TJpgDec.setCallback(drawBmp);
-  // TJpgDec.setJpgScale(2);
+  TJpgDec.setCallback(drawBmp);
+  TJpgDec.setJpgScale(2);
 }
 
 void loop(){
@@ -507,12 +481,6 @@ void loop(){
     getCurrentlyPlaying();
   }
 
-  //     #ifdef DEBUG
-  //       Serial.println(F("Polled API"));
-  //     #endif
-
-  //     SongInfo song = song;
-
   if (readFlag) {
     lastResponse = millis();
     
@@ -533,35 +501,26 @@ void loop(){
       // Close playback bar wave when switching songs
       playbackBar.setPlayState(false);
       playbackBar.draw();
-      imageIsSet = false;
+      imageDrawFlag = false;
+      imageRequested = false;
       newSong = false;
+    }
+
+    // In the event of failure, continues fetching until success
+    if (!imageRequested) {
+      getAlbumArt();
     }
 
     playbackBar.duration = song.durationMs;
     playbackBar.progress = song.progressMs;
     playbackBar.setPlayState(song.isPlaying);
-    // Draw progress indicator to correct location before image loads
-    playbackBar.draw();
-
-  
-
-    // // In the event of failure, continues fetching until success
-    // if (!imageIsSet) {
-    //   // Get and draw album art
-    //   yield();
-    //   if (getAlbumArt()) {
-    //     TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
-    //     imageIsSet = true;
-    //   }
-    // }
-  
- 
 
   } else {
     // Interpolate playback bar progress between api calls
     int interpolatedTime = (int) (millis() - lastResponse + song.progressMs);
     playbackBar.progress = min(interpolatedTime, song.durationMs);
   }
+
 
   // // Read potentiometer value at fixed interval
   // if (millis() - lastPotRead > POT_READ_RATE) {
@@ -590,4 +549,9 @@ void loop(){
   }
 
   playbackBar.draw();
+
+  if (imageDrawFlag) {
+    TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
+    imageDrawFlag = false;
+  }
 }

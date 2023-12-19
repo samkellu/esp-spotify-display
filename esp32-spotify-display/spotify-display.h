@@ -1,5 +1,6 @@
 #include "DFRobot_GDL.h"
 #include "credentials.h"
+#define FORMAT_LITTLEFS_ON_FAIL true
 #include "LittleFS.h"
 #include <TJpg_Decoder.h>
 #include <ArduinoJson.h>
