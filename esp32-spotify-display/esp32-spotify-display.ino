@@ -32,11 +32,10 @@ class PlaybackBar {
     }
 
     void draw() {
-      if (millis() - lastDraw < DRAW_RATE || (!playing && !playStateFlag)) {
-        return;
-      }
-
+      // Limit draw rate to improve frame time consistency
+      if (millis() - lastDraw < DRAW_RATE || (!playing && !playStateFlag)) return;
       lastDraw = millis();
+
       int curAmplitude = amplitude * (amplitudePercent / (float) 100);
       int bound = x + width * (progress / (float) duration);
       uint32_t prevTime = curTime;
@@ -45,6 +44,7 @@ class PlaybackBar {
       // Stop playing
       if (!playStateFlag && playing) {
 
+        // Close wave incrementally to zero amplitude
         for (int i = prevAmplitude; i > 0; i--) {
           for (int j = x; j < prevBound; j++) {
             screen.drawPixel(j, y + i * sin(period * (prevTime + j)), COLOR_RGB565_BLACK);
@@ -63,7 +63,7 @@ class PlaybackBar {
         screen.drawFastVLine(prevBound, y-2*height, 4*height, COLOR_RGB565_BLACK);
         screen.drawFastVLine(bound, y-2*height, 4*height, color);
 
-        // Animate wave opening to full height when music starts playing again
+        // Animate wave opening to set amplitude
         for (int i = 1; i <= curAmplitude; i++) {
           for (int j = x; j < bound; j++) {
             screen.drawPixel(j, y + (i - 1) * sin(period * (curTime + j)), COLOR_RGB565_BLACK);
@@ -71,16 +71,18 @@ class PlaybackBar {
           }
           delay(100);
         }
+
         playing = 1;
         prevBound = bound;
         return;
 
       } else {
-        // Draw wave
+        // Draw animated wave
         for (int i = x; i < bound; i++) {
           screen.drawPixel(i, y + prevAmplitude * sin(period * (prevTime + i)), COLOR_RGB565_BLACK);
           screen.drawPixel(i, y + curAmplitude * sin(period * (curTime + i)), color);
         }
+
         prevAmplitude = curAmplitude;
       }
 
@@ -89,6 +91,7 @@ class PlaybackBar {
       for (int i = prevBound; i != bound; i += sign) {
         screen.drawFastVLine(i, y-2*height, 4*height, COLOR_RGB565_BLACK);
       }
+
       screen.drawFastHLine(bound, y, width + x - bound, color);
       screen.drawFastVLine(bound, y-2*height, 4*height, color);
       prevBound = bound;
@@ -99,6 +102,8 @@ class PlaybackBar {
     }
 };
 
+PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, COLOR_RGB565_WHITE);
+WebServer server(80);
 
 AsyncHTTPSRequest httpsAuth;
 AsyncHTTPSRequest httpsCurrent;
@@ -106,24 +111,24 @@ AsyncHTTPSRequest httpsImg;
 String accessToken;
 String refreshToken;
 SongInfo song;
-bool accessTokenSet = false;
 int expiry;
-bool readFlag = false;
-bool newSong = false;
+
+// Control flags
+bool accessTokenSet = false;
+bool readFlag       = false;
+bool newSong        = false;
 bool imageRequested = false;
-bool imageDrawFlag = false;
+bool imageDrawFlag  = false;
 
 // Connects to the network specified in credentials.h
 void connect(const char* ssid, const char* passphrase) {
   #ifdef DEBUG
-    Serial.print("Attempting connection to ");
-    Serial.println(ssid);
+    Serial.printf("Attempting connection to %s\n", ssid);
   #endif
 
+  // Wait for connection
   WiFi.begin(ssid, passphrase);
-  while ((WiFi.status() != WL_CONNECTED)) {
-    delay(200);
-  }
+  while ((WiFi.status() != WL_CONNECTED)) delay(200);
 
   #ifdef DEBUG
     Serial.print("Successfully connected to ");
@@ -132,14 +137,12 @@ void connect(const char* ssid, const char* passphrase) {
 }
 
 void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
-
+  // Fail if client isnt finished reading or response failed
   if (readyState != readyStateDone) return;
-  Serial.println(request->responseHTTPcode());
   if (request->responseHTTPcode() != 200) return;
 
   DynamicJsonDocument doc(1024);
   String json = request->responseText();
-  Serial.println(json);
   DeserializationError err = deserializeJson(doc, json);
 
   if (err) {
@@ -151,29 +154,24 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
     return;
   }
 
-  // TODO check if these keys are present first
   accessToken = doc["access_token"].as<String>();
   refreshToken = doc["refresh_token"].as<String>();
   expiry = millis() + 1000 * doc["expires_in"].as<int>();
-
-  Serial.println(accessToken);
   accessTokenSet = true;
 }
 
 bool getAuth(bool refresh, String code) {
-
+  // Fail if client is busy
   if (httpsAuth.readyState() != readyStateUnsent && httpsAuth.readyState() != readyStateDone) return false;
-
 
   if (httpsAuth.open("POST", "https://accounts.spotify.com/api/token")) {
     String body;
-
     if (refresh) {
       body = "grant_type=refresh_token&refresh_token=" + refreshToken;
     
     } else {
       body = "grant_type=authorization_code&code=" + code + 
-              "&redirect_uri=http://" + WiFi.localIP().toString() + "/callback";
+             "&redirect_uri=http://" + WiFi.localIP().toString() + "/callback";
     }
 
     String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
@@ -184,7 +182,6 @@ bool getAuth(bool refresh, String code) {
     return true;
 
   } else {
-
     #ifdef DEBUG
       Serial.println("Connection failed!");
     #endif
@@ -193,32 +190,31 @@ bool getAuth(bool refresh, String code) {
 }
 
 void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
-
+  // Fail if client is not done or response failed
   if (readyState != readyStateDone) return;
   if (request->responseHTTPcode() != 200) return;
 
   String json = request->responseText();
-
   DynamicJsonDocument doc(1024);
   StaticJsonDocument<300> filter;
-  filter["progress_ms"] = true;
-  filter["is_playing"]  = true;
 
   JsonObject filter_device            = filter.createNestedObject("device");
   JsonObject filter_item              = filter.createNestedObject("item");
   JsonObject filter_item_album        = filter_item.createNestedObject("album");
   JsonObject filter_item_album_images = filter_item_album["images"].createNestedObject();
 
-  filter_device["volume_percent"]    = true;
-  filter_device["name"]              = true;
-  filter_item["name"]                = true;
-  filter_item["duration_ms"]         = true;
-  filter_item["artists"][0]["name"]  = true;
-  filter_item["id"]                  = true;
-  filter_item_album["name"]          = true;
-  filter_item_album_images["url"]    = true;
-  filter_item_album_images["width"]  = true;
-  filter_item_album_images["height"] = true;
+  filter["progress_ms"]               = true;
+  filter["is_playing"]                = true;
+  filter_device["volume_percent"]     = true;
+  filter_device["name"]               = true;
+  filter_item["name"]                 = true;
+  filter_item["duration_ms"]          = true;
+  filter_item["artists"][0]["name"]   = true;
+  filter_item["id"]                   = true;
+  filter_item_album["name"]           = true;
+  filter_item_album_images["url"]     = true;
+  filter_item_album_images["width"]   = true;
+  filter_item_album_images["height"]  = true;
 
   DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
   if (err) {
@@ -247,6 +243,7 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
     int height = images[i]["height"].as<int>();
     int width  = images[i]["width"].as<int>();
 
+    // Only grab appropriate sized image
     if (height <= 300 && width <= 300) {
       song.height = height;
       song.width  = width;
@@ -255,26 +252,23 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
     }
   }
 
-  yield();
   readFlag = true;
   newSong = song.id != prevId; 
 }
 
 bool getCurrentlyPlaying() {
-
+  // Fail if client is busy
   if (httpsCurrent.readyState() != readyStateUnsent && httpsCurrent.readyState() != readyStateDone) return false;
-  if (httpsCurrent.open("GET", "https://api.spotify.com/v1/me/player")) {
 
+  if (httpsCurrent.open("GET", "https://api.spotify.com/v1/me/player")) {
     String auth = "Bearer " + accessToken;
     httpsCurrent.setReqHeader("Cache-Control", "no-cache");
     httpsCurrent.setReqHeader("Authorization", auth.c_str());
     httpsCurrent.onReadyStateChange(currentlyPlayingCB);
-    Serial.println("Real");
     httpsCurrent.send();
     return true;
 
   } else {
-
     #ifdef DEBUG
       Serial.println("Connection failed!");
     #endif
@@ -283,10 +277,8 @@ bool getCurrentlyPlaying() {
 }
 
 void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
-
+  // Fail if client hasnt finished reading or response failed
   if (readyState != readyStateDone) return;
-  Serial.println("res");  
-  Serial.println(request->responseHTTPcode());
   if (request->responseHTTPcode() != 200) {
     imageRequested = false;
     #ifdef DEBUG
@@ -303,6 +295,8 @@ void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
     return;
   }
 
+  // Write image to file
+  // TODO - figure out buffered writing and reading from client
   char* img = request->responseLongText();
   f.write((uint8_t*) img, strlen(img));
   f.close();
@@ -315,15 +309,13 @@ void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
 
 
 bool getAlbumArt() {
-
+  // Fail if client isnt ready
   if (httpsImg.readyState() != readyStateUnsent && httpsImg.readyState() != readyStateDone) return false;
-  Serial.println(song.imgUrl.c_str());
+
   if (httpsImg.open("GET", song.imgUrl.c_str())) {
-    Serial.println("Requestod");
     httpsImg.onReadyStateChange(albumArtCB);
     httpsImg.setReqHeader("Cache-Control", "no-cache");
     httpsImg.send();
-    imageRequested = true;
     return true;
 
   } else {
@@ -388,22 +380,12 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   return true;
 }
 
-PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, COLOR_RGB565_WHITE);
-
-#if defined(ESP8266)
-  ESP8266WebServer server(80);
-#elif defined(ESP32)
-  WebServer server(80);
-#endif
-
 void webServerHandleRoot() {
   String header = "https://accounts.spotify.com/authorize?client_id=" + String(CLIENT) +
                   "&response_type=code&redirect_uri=http://" + WiFi.localIP().toString() +
                   "/callback&scope=%20user-modify-playback-state%20user-read-currently-playing%20" +
                   "user-read-playback-state";
   
-  Serial.println(header);
-
   server.sendHeader("Location", header, true);
   server.send(302, "text/html", "");
 }
@@ -427,6 +409,7 @@ void webServerHandleCallback() {
   }
 }
 
+// Control timers
 uint32_t lastRequest   = 0;
 uint32_t lastResponse  = 0;
 uint32_t lastPotRead   = 0;
@@ -449,8 +432,10 @@ void setup() {
   screen.begin();
   screen.fillScreen(COLOR_RGB565_BLACK);
 
+  // Initialise wifi
   connect(SSID, PASSPHRASE);
   Serial.println(WiFi.localIP());
+
   // Initialise webserver for spotify OAuth
   server.on("/", webServerHandleRoot);
   server.on("/callback", webServerHandleCallback);
@@ -483,7 +468,6 @@ void loop(){
 
   if (readFlag) {
     lastResponse = millis();
-    
     readFlag = false;
     if (newSong) {
 
@@ -508,7 +492,7 @@ void loop(){
 
     // In the event of failure, continues fetching until success
     if (!imageRequested) {
-      getAlbumArt();
+      imageRequested = getAlbumArt();
     }
 
     playbackBar.duration = song.durationMs;
