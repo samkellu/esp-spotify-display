@@ -1,5 +1,7 @@
 #include "DFRobot_GDL.h"
 #include "credentials.h"
+#include "PlaybackBar.h"
+
 #define FORMAT_LITTLEFS_ON_FAIL true
 #include "LittleFS.h"
 #include <TJpg_Decoder.h>
@@ -19,16 +21,14 @@
 #endif
 
 #define POT           A0
-#define POT_READ_RATE 400        //ms
-#define TFT_CS        15          // D6
+#define POT_READ_RATE 400       //ms
+#define TFT_CS        15        // D6
 #define TFT_RST       2         // D5
 #define TFT_DC        4         // D4
 #define TFT_WIDTH     240
 #define TFT_HEIGHT    320
 #define REQUEST_RATE  20000      // ms
 #define IMG_PATH      "/img.jpg"
-#define PLAY_BAR_Y    300
-#define DRAW_RATE     50        // ms
 
 #define DEBUG         1
 
