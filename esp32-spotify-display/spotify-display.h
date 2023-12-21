@@ -27,7 +27,7 @@
 #define TFT_DC        4         // D4
 #define TFT_WIDTH     240
 #define TFT_HEIGHT    320
-#define REQUEST_RATE  20000      // ms
+#define REQUEST_RATE  20000     // ms
 #define IMG_PATH      "/img.jpg"
 
 #define DEBUG         1
