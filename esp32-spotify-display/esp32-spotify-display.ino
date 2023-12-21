@@ -7,10 +7,8 @@ WebServer server(80);
 AsyncHTTPSRequest httpsAuth;
 AsyncHTTPSRequest httpsCurrent;
 AsyncHTTPSRequest httpsImg;
-String accessToken;
-String refreshToken;
 SongInfo song;
-int expiry;
+AuthInfo auth;
 
 // Control flags
 bool accessTokenSet = false;
@@ -53,9 +51,9 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
     return;
   }
 
-  accessToken = doc["access_token"].as<String>();
-  refreshToken = doc["refresh_token"].as<String>();
-  expiry = millis() + 1000 * doc["expires_in"].as<int>();
+  auth.accessToken = doc["access_token"].as<String>();
+  auth.refreshToken = doc["refresh_token"].as<String>();
+  auth.expiry = millis() + 1000 * doc["expires_in"].as<int>();
   accessTokenSet = true;
 }
 
@@ -66,16 +64,16 @@ bool getAuth(bool refresh, String code) {
   if (httpsAuth.open("POST", "https://accounts.spotify.com/api/token")) {
     String body;
     if (refresh) {
-      body = "grant_type=refresh_token&refresh_token=" + refreshToken;
+      body = "grant_type=refresh_token&refresh_token=" + auth.refreshToken;
     
     } else {
       body = "grant_type=authorization_code&code=" + code + 
              "&redirect_uri=http://" + WiFi.localIP().toString() + "/callback";
     }
 
-    String auth = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
+    String authStr = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
     httpsAuth.setReqHeader("Content-Type", "application/x-www-form-urlencoded");
-    httpsAuth.setReqHeader("Authorization", auth.c_str());
+    httpsAuth.setReqHeader("Authorization", authStr.c_str());
     httpsAuth.onReadyStateChange(authCB);
     httpsAuth.send(body);
     return true;
@@ -160,9 +158,9 @@ bool getCurrentlyPlaying() {
   if (httpsCurrent.readyState() != readyStateUnsent && httpsCurrent.readyState() != readyStateDone) return false;
 
   if (httpsCurrent.open("GET", "https://api.spotify.com/v1/me/player")) {
-    String auth = "Bearer " + accessToken;
+    String authStr = "Bearer " + auth.accessToken;
     httpsCurrent.setReqHeader("Cache-Control", "no-cache");
-    httpsCurrent.setReqHeader("Authorization", auth.c_str());
+    httpsCurrent.setReqHeader("Authorization", authStr.c_str());
     httpsCurrent.onReadyStateChange(currentlyPlayingCB);
     httpsCurrent.send();
     return true;
@@ -355,7 +353,7 @@ void loop(){
     return;
   }
 
-  if (millis() > expiry) {
+  if (millis() > auth.expiry) {
     getAuth(true, "");
   }
 

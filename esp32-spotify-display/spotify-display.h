@@ -51,3 +51,9 @@ struct SongInfo {
   String deviceName;
   bool isPlaying;
 };
+
+struct AuthInfo {
+  String accessToken;
+  String refreshToken;
+  int expiry;
+};
