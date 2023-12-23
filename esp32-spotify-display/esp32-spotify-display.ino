@@ -4,7 +4,6 @@ DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, 50);
 WebServer server(80);
 
-
 // TODO - when have access to hardware again, move to respective functions
 //        or see if can use just one
 AsyncHTTPSRequest httpsAuth;
@@ -36,6 +35,8 @@ void connect(const char* ssid, const char* passphrase) {
     Serial.println(ssid);
   #endif
 }
+
+// ------------------------------- GET/REFRESH ACCESS TOKENS -------------------------------
 
 void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   // Fail if client isnt finished reading or response failed
@@ -89,6 +90,8 @@ bool getAuth(bool refresh, String code) {
     return false;
   }
 }
+
+// ------------------------------- GET CURRENTLY PLAYING -------------------------------
 
 void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   // Fail if client is not done or response failed
@@ -177,6 +180,8 @@ bool getCurrentlyPlaying() {
   }
 }
 
+// ------------------------------- GET ALBUM ART -------------------------------
+
 void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   // Fail if client hasnt finished reading or response failed
   if (readyState != readyStateDone) return;
@@ -208,7 +213,6 @@ void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   return;
 }
 
-
 bool getAlbumArt() {
   // Fail if client isnt ready
   if (httpsImg.readyState() != readyStateUnsent && httpsImg.readyState() != readyStateDone) return false;
@@ -227,6 +231,7 @@ bool getAlbumArt() {
   }
 }
 
+// ------------------------------- VOLUME CONTROL -------------------------------
 
 void volumeSetCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   // Fail if client hasnt finished reading or response failed
@@ -265,6 +270,7 @@ bool updateVolume() {
   return true;
 }
 
+// ------------------------------- TJPG -------------------------------
 
 // Callback for TJpg draw function
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
@@ -276,6 +282,8 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   screen.drawRGBBitmap(x, y, bitmap, w, h);
   return true;
 }
+
+// ------------------------------- WEBSERVER -------------------------------
 
 void webServerHandleRoot() {
   String header = "https://accounts.spotify.com/authorize?client_id=" + String(CLIENT) +
@@ -305,6 +313,8 @@ void webServerHandleCallback() {
     #endif
   }
 }
+
+// ------------------------------- MAIN -------------------------------
 
 // Control timers
 uint32_t lastRequest   = 0;
@@ -401,7 +411,6 @@ void loop(){
     int interpolatedTime = (int) (millis() - lastResponse + song.progressMs);
     playbackBar.progress = min(interpolatedTime, song.durationMs);
   }
-
 
   // Read potentiometer value at fixed interval
   if (millis() - lastPotRead > POT_READ_RATE) {
