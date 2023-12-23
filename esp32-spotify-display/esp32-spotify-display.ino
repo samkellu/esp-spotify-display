@@ -182,9 +182,14 @@ bool getCurrentlyPlaying() {
 
 // ------------------------------- GET ALBUM ART -------------------------------
 
+// TODO - convert to buffered as images are over 5kB in size 
 void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   // Fail if client hasnt finished reading or response failed
-  if (readyState != readyStateDone) return;
+
+  // TODO - I think removing this should makie this function better in a buffered manner, 
+  // check on real hardware 
+
+  // if (readyState != readyStateDone) return;
   if (request->responseHTTPcode() != 200) {
     imageRequested = false;
     #ifdef DEBUG
@@ -202,7 +207,7 @@ void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   }
 
   // Write image to file
-  // TODO - figure out buffered writing and reading from client
+  // TODO - figure out buffered writing and reading from client, may need to do a poll loop here
   char* img = request->responseLongText();
   f.write((uint8_t*) img, strlen(img));
   f.close();
