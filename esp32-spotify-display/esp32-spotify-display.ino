@@ -4,9 +4,13 @@ DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, 50);
 WebServer server(80);
 
+
+// TODO - when have access to hardware again, move to respective functions
+//        or see if can use just one
 AsyncHTTPSRequest httpsAuth;
 AsyncHTTPSRequest httpsCurrent;
 AsyncHTTPSRequest httpsImg;
+AsyncHTTPSRequest httpsVolume;
 SongInfo song;
 AuthInfo auth;
 
@@ -224,49 +228,45 @@ bool getAlbumArt() {
 }
 
 
-//     bool updateVolume() {
-//       const String host = F("api.spotify.com");
-//       const String url  = F("/v1/me/player/volume?volume_percent=") + String(song.volume);
-//       const int port    = 443;
+void volumeSetCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
+  // Fail if client hasnt finished reading or response failed
+  if (readyState != readyStateDone) return;
+  if (request->responseHTTPcode() != 200) {
+    #ifdef DEBUG
+      Serial.println("An error occurred: HTTP " + request->responseHTTPcode());
+    #endif
+    return;
+  }
+}
 
-//       if (!client.connect(host, port)) {
-//         #ifdef DEBUG
-//           Serial.println(F("Connection failed!"));
-//         #endif
-//         return false;
-//       }
+bool updateVolume() {
+  // Fail if client isnt ready
+  if (httpsVolume.readyState() != readyStateUnsent && httpsVolume.readyState() != readyStateDone) return false;
 
-//       String auth = F("Bearer ") + accessToken;
-//       String req  = F("PUT ") + url +
-//                     F(" HTTP/1.0\r\nHost: ") + host +
-//                     F("\r\nAuthorization: ") + auth +
-//                     F("\r\nContent-Length: 0") + 
-//                     F("\r\nConnection: close\r\n\r\n");
+  char* format = "https://api.spotify.com/v1/me/player/volume?volume_percent=%d";
+  char buf[128];
+  sprintf(buf, format, song.volume_percent);
 
-//       if (client.println(req) == 0) {
-//         #ifdef DEBUG
-//           Serial.println(F("Failed to send request..."));
-//         #endif
-//         return false;
-//       }
+  if (httpsVolume.open("PUT", buf)) {
+    sprintf(buf, "Bearer %s", auth.accessToken);
+    httpsVolume.setReqHeader("Authorization", buf);
+    httpsVolume.setReqHeader("Cache-Control", "no-cache");
+    httpsVolume.setReqHeader("Content-Length", "0");
+    httpsVolume.send();
+    return true;
 
-//       String ln     = client.readStringUntil('\r');
-//       int start     = ln.indexOf(' ') + 1;
-//       int end       = ln.indexOf(' ', start);
-//       String status = ln.substring(start, end);
+  } else {
+    #ifdef DEBUG
+      Serial.println("Connection failed!");
+    #endif
+    return false;
+  }
 
-//       if (strcmp(status.c_str(), "204") != 0) {
-//         #ifdef DEBUG
-//           Serial.println(F("An error occurred: HTTP ") + status);
-//         #endif
-//         return false;
-//       }
-
-//       return true;
-//     }
-// ;
+  return true;
+}
 
 
+// Callback for TJpg draw function
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   // Stop drawing if out of bounds
   if (y >= TFT_HEIGHT) {
@@ -403,24 +403,24 @@ void loop(){
   }
 
 
-  // // Read potentiometer value at fixed interval
-  // if (millis() - lastPotRead > POT_READ_RATE) {
-  //   int newVol = 100 * (analogRead(POT) / (float) 1023);
+  // Read potentiometer value at fixed interval
+  if (millis() - lastPotRead > POT_READ_RATE) {
+    int newVol = 100 * (analogRead(POT) / (float) 1023);
 
-  //   // Account for pot wobble
-  //   if (abs(song.volume - newVol) > 2) {
-  //     lastPotChange = millis();
-  //     song.volume = newVol;
-  //   }
+    // Account for pot wobble
+    if (abs(song.volume - newVol) > 2) {
+      lastPotChange = millis();
+      song.volume = newVol;
+    }
 
-  //   lastPotRead = millis();
-  // }
+    lastPotRead = millis();
+  }
 
-  // // Only send api POST when pot hasnt changed for a while
-  // if (lastPotChange != 0 && millis() - lastPotChange > 3000) {
-  //   lastPotChange = 0;
-  //   updateVolume();
-  // }
+  // Only send api POST when pot hasnt changed for a while
+  if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT) {
+    lastPotChange = 0;
+    updateVolume();
+  }
 
   // Slowly change amplitude of playback bar wave
   if (playbackBar.amplitudePercent != song.volume) {
