@@ -3,6 +3,7 @@
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, 50);
 WebServer server(80);
+WiFiClientSecure client;
 
 // TODO - when have access to hardware again, move to respective functions
 //        or see if can use just one
@@ -185,20 +186,55 @@ bool getCurrentlyPlaying() {
 
 // ------------------------------- GET ALBUM ART -------------------------------
 
-// TODO - convert to buffered as images are over 5kB in size 
-void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
-  // Fail if client hasnt finished reading or response failed
+bool getAlbumArt() {
+  const char* host  = "i.scdn.co";
+  const String url  = song.imgUrl.substring(17);
+  uint16_t port     = 443;
 
-  // TODO - I think removing this should makie this function better in a buffered manner, 
-  // check on real hardware 
-
-  if (readyState != readyStateDone) return;
-  if (request->responseHTTPcode() != 200) {
-    imageRequested = false;
+  if (!client.connect(host, port)) {
     #ifdef DEBUG
-      Serial.println("An error occurred: HTTP " + request->responseHTTPcode());
+      Serial.println("Connection failed!");
     #endif
-    return;
+    return false;
+  }
+
+  String req = "GET " + url + " HTTP/1.0\r\nHost: " +
+                host + "\r\nCache-Control: no-cache\r\n";
+
+  if (client.println(req) == 0) {
+    #ifdef DEBUG
+      Serial.println("Failed to send request...");
+    #endif
+    return false;
+  }
+
+  String ln     = client.readStringUntil('\r');
+  int start     = ln.indexOf(' ') + 1;
+  int end       = ln.indexOf(' ', start);
+  String status = ln.substring(start, end);
+
+  if (strcmp(status.c_str(), "200") != 0) {
+    #ifdef DEBUG
+      Serial.println("An error occurred: HTTP " + status);
+    #endif
+    client.stop();
+    return false;
+  }
+
+  if (!client.find("Content-Length:")) {
+    #ifdef DEBUG
+      Serial.println("Response had not content-length header.");
+    #endif
+    return false;
+  }
+
+  int numBytes = client.parseInt();
+  if (!client.find("\r\n\r\n")) {
+    #ifdef DEBUG
+      Serial.println("Invalid response from server.");
+    #endif
+    client.stop();
+    return false;
   }
 
   File f = LittleFS.open(IMG_PATH, "w+");
@@ -206,37 +242,31 @@ void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
     #ifdef DEBUG
       Serial.println("Failed to write image to file...");
     #endif
-    return;
-  }
-
-  // Write image to file
-  // TODO - figure out buffered writing and reading from client, may need to do a poll loop here
-  char* img = request->responseLongText();
-  f.write((uint8_t*) img, strlen(img));
-  f.close();
-  #ifdef DEBUG
-    Serial.println("Wrote image to file");
-  #endif
-  imageDrawFlag = true;
-  return;
-}
-
-bool getAlbumArt() {
-  // Fail if client isnt ready
-  if (httpsImg.readyState() != readyStateUnsent && httpsImg.readyState() != readyStateDone) return false;
-
-  if (httpsImg.open("GET", song.imgUrl.c_str())) {
-    httpsImg.onReadyStateChange(albumArtCB);
-    httpsImg.setReqHeader("Cache-Control", "no-cache");
-    httpsImg.send();
-    return true;
-
-  } else {
-    #ifdef DEBUG
-      Serial.println("Connection failed!");
-    #endif
     return false;
   }
+
+  int offset = 0;
+  uint8_t buf[128];
+  while (offset < numBytes) {
+
+    size_t available = client.available();
+
+    if (available) {
+      int bytes = client.readBytes(buf, min(available, sizeof(buf)));
+      f.write(buf, bytes);
+      offset += bytes;
+    }
+
+    // Reset WDT
+    yield();
+  }
+
+  f.close();
+  #ifdef DEBUG
+    Serial.printf("Wrote to file %d/%d bytes\n", offset, numBytes);
+  #endif
+  client.stop();
+  return true;
 }
 
 // ------------------------------- VOLUME CONTROL -------------------------------
@@ -332,6 +362,8 @@ void setup() {
     Serial.begin(115200);
   #endif
 
+  client.setInsecure();
+
   // Initialise LittleFS
   if (!LittleFS.begin()) {
     #ifdef DEBUG
@@ -355,9 +387,6 @@ void setup() {
 
   TJpgDec.setCallback(drawBmp);
   TJpgDec.setJpgScale(2);
-
-  // TEMP
-  song.volume = 100;
 }
 
 void loop(){
@@ -373,6 +402,13 @@ void loop(){
 
   if (millis() > auth.expiry) {
     getAuth(true, "");
+  }
+
+  if (playbackBar.progress == playbackBar.duration) {
+    playbackBar.progress = 0;
+    playbackBar.duration = 1;
+    getCurrentlyPlaying();
+    return;
   }
 
   if (millis() - lastRequest > REQUEST_RATE) {
@@ -399,20 +435,21 @@ void loop(){
       // Close playback bar wave when switching songs
       playbackBar.setPlayState(false);
       playbackBar.draw(screen);
-      imageDrawFlag = false;
-      // imageRequested = false;
       newSong = false;
+      imageRequested = true;
     }
 
     // In the event of failure, continues fetching until success
-    // if (!imageRequested) {
-    //   imageRequested = getAlbumArt();
-    // }
+    if (imageRequested) {
+      if (getAlbumArt()) {
+        TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
+        imageRequested = false;
+      }
+    }
 
     playbackBar.duration = song.durationMs;
     playbackBar.progress = song.progressMs;
     playbackBar.setPlayState(song.isPlaying);
-    Serial.println(song.isPlaying);
 
   } else {
     // Interpolate playback bar progress between api calls
@@ -447,9 +484,4 @@ void loop(){
   }
 
   playbackBar.draw(screen);
-
-  // if (imageDrawFlag) {
-  //   TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
-  //   imageDrawFlag = false;
-  // }
 }

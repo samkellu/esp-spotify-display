@@ -17,6 +17,7 @@
   #define _ASYNC_HTTPS_LOGLEVEL_      1
   #include <AsyncHTTPSRequest_Generic.h>
   #include <WiFi.h>
+  #include <WiFiClientSecure.h>
   #include <WebServer.h>
 #endif
 
