@@ -59,6 +59,9 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   auth.accessToken = doc["access_token"].as<String>();
   auth.refreshToken = doc["refresh_token"].as<String>();
   auth.expiry = millis() + 1000 * doc["expires_in"].as<int>();
+  #ifdef DEBUG
+    Serial.println("Successfully got access tokens!");
+  #endif
   accessTokenSet = true;
 }
 
@@ -189,7 +192,7 @@ void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   // TODO - I think removing this should makie this function better in a buffered manner, 
   // check on real hardware 
 
-  // if (readyState != readyStateDone) return;
+  if (readyState != readyStateDone) return;
   if (request->responseHTTPcode() != 200) {
     imageRequested = false;
     #ifdef DEBUG
@@ -303,9 +306,6 @@ void webServerHandleRoot() {
 void webServerHandleCallback() {
   if (server.arg("code") != "") {
     if (getAuth(false, server.arg("code"))) {
-      #ifdef DEBUG
-        Serial.println("Successfully got access tokens!");
-      #endif
       server.send(200, "text/html", "Login complete! you may close this tab.\r\n");
     
     } else {
@@ -355,11 +355,14 @@ void setup() {
 
   TJpgDec.setCallback(drawBmp);
   TJpgDec.setJpgScale(2);
+
+  // TEMP
+  song.volume = 100;
 }
 
 void loop(){
   server.handleClient();
-  yield();
+  delay(20);
 
   if (!accessTokenSet) {
     screen.setCursor(0,0);
@@ -372,7 +375,7 @@ void loop(){
     getAuth(true, "");
   }
 
-  if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
+  if (millis() - lastRequest > REQUEST_RATE) {
     lastRequest = millis();
     Serial.println("polled");
     getCurrentlyPlaying();
@@ -382,7 +385,6 @@ void loop(){
     lastResponse = millis();
     readFlag = false;
     if (newSong) {
-
       // Clear album art and song/artist text
       screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
 
@@ -398,18 +400,19 @@ void loop(){
       playbackBar.setPlayState(false);
       playbackBar.draw(screen);
       imageDrawFlag = false;
-      imageRequested = false;
+      // imageRequested = false;
       newSong = false;
     }
 
     // In the event of failure, continues fetching until success
-    if (!imageRequested) {
-      imageRequested = getAlbumArt();
-    }
+    // if (!imageRequested) {
+    //   imageRequested = getAlbumArt();
+    // }
 
     playbackBar.duration = song.durationMs;
     playbackBar.progress = song.progressMs;
     playbackBar.setPlayState(song.isPlaying);
+    Serial.println(song.isPlaying);
 
   } else {
     // Interpolate playback bar progress between api calls
@@ -417,24 +420,24 @@ void loop(){
     playbackBar.progress = min(interpolatedTime, song.durationMs);
   }
 
-  // Read potentiometer value at fixed interval
-  if (millis() - lastPotRead > POT_READ_RATE) {
-    int newVol = 100 * (analogRead(POT) / (float) 1023);
+  // // Read potentiometer value at fixed interval
+  // if (millis() - lastPotRead > POT_READ_RATE) {
+  //   int newVol = 100 * (analogRead(POT) / (float) 1023);
 
-    // Account for pot wobble
-    if (abs(song.volume - newVol) > 2) {
-      lastPotChange = millis();
-      song.volume = newVol;
-    }
+  //   // Account for pot wobble
+  //   if (abs(song.volume - newVol) > 2) {
+  //     lastPotChange = millis();
+  //     song.volume = newVol;
+  //   }
 
-    lastPotRead = millis();
-  }
+  //   lastPotRead = millis();
+  // }
 
-  // Only send api POST when pot hasnt changed for a while
-  if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT) {
-    lastPotChange = 0;
-    updateVolume();
-  }
+  // // Only send api POST when pot hasnt changed for a while
+  // if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT) {
+  //   lastPotChange = 0;
+  //   updateVolume();
+  // }
 
   // Slowly change amplitude of playback bar wave
   if (playbackBar.amplitudePercent != song.volume) {
@@ -445,8 +448,8 @@ void loop(){
 
   playbackBar.draw(screen);
 
-  if (imageDrawFlag) {
-    TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
-    imageDrawFlag = false;
-  }
+  // if (imageDrawFlag) {
+  //   TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
+  //   imageDrawFlag = false;
+  // }
 }

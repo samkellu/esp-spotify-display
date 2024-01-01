@@ -10,11 +10,11 @@ PlaybackBar::PlaybackBar(int x, int y, int width, int height, int amplitude, flo
     this->drawRateMs = drawRateMs;
 }
 
-void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI screen) {
+void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen) {
     // Limit draw rate to improve frame time consistency
     if (millis() - lastDraw < drawRateMs || (!playing && !playStateFlag)) return;
 
-    lastDraw = millis();
+    lastDraw = millis(); 
     int curAmplitude = amplitude * (amplitudePercent / (float) 100);
     int bound = x + width * (progress / (float) duration);
     uint32_t prevTime = curTime;
@@ -54,6 +54,7 @@ void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI screen) {
         return;
 
     } else {
+
         // Draw animated wave
         for (int i = x; i < bound; i++) {
             screen.drawPixel(i, y + prevAmplitude * sin(period * (prevTime + i)), COLOR_RGB565_BLACK);
