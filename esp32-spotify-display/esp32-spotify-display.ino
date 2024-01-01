@@ -255,7 +255,7 @@ bool updateVolume() {
 
   char* format = "https://api.spotify.com/v1/me/player/volume?volume_percent=%d";
   char buf[128];
-  sprintf(buf, format, song.volume_percent);
+  sprintf(buf, format, song.volume);
 
   if (httpsVolume.open("PUT", buf)) {
     sprintf(buf, "Bearer %s", auth.accessToken);
@@ -396,7 +396,7 @@ void loop(){
 
       // Close playback bar wave when switching songs
       playbackBar.setPlayState(false);
-      playbackBar.draw();
+      playbackBar.draw(screen);
       imageDrawFlag = false;
       imageRequested = false;
       newSong = false;
@@ -443,7 +443,7 @@ void loop(){
     playbackBar.amplitudePercent = min(max(0, playbackBar.amplitudePercent), 100);
   }
 
-  playbackBar.draw();
+  playbackBar.draw(screen);
 
   if (imageDrawFlag) {
     TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);

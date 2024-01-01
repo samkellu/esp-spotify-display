@@ -1,7 +1,6 @@
-#inlcude "PlaybackBar.h"
+#include "PlaybackBar.h"
 
-PlaybackBar::PlaybackBar(DFRobot_ST7789_240x320_HW_SPI screen, int x, int y, int width, int height, int amplitude, float period, int drawRateMs) {
-    this->screen     = screen;
+PlaybackBar::PlaybackBar(int x, int y, int width, int height, int amplitude, float period, int drawRateMs) {
     this->x          = x;
     this->y          = y;
     this->width      = width;
@@ -11,7 +10,7 @@ PlaybackBar::PlaybackBar(DFRobot_ST7789_240x320_HW_SPI screen, int x, int y, int
     this->drawRateMs = drawRateMs;
 }
 
-void PlaybackBar::draw() {
+void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI screen) {
     // Limit draw rate to improve frame time consistency
     if (millis() - lastDraw < drawRateMs || (!playing && !playStateFlag)) return;
 
