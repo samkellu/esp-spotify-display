@@ -10,9 +10,9 @@ PlaybackBar::PlaybackBar(int x, int y, int width, int height, int amplitude, flo
     this->drawRateMs = drawRateMs;
 }
 
-void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen) {
+void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force) {
     // Limit draw rate to improve frame time consistency
-    if (millis() - lastDraw < drawRateMs || (!playing && !playStateFlag)) return;
+    if (!force && millis() - lastDraw < drawRateMs || (!playing && !playStateFlag)) return;
 
     lastDraw = millis(); 
     int curAmplitude = amplitude * (amplitudePercent / (float) 100);

@@ -310,11 +310,37 @@ bool updateVolume() {
 
 // ------------------------------- TJPG -------------------------------
 
+bool drawGradient = 1;
+
 // Callback for TJpg draw function
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   // Stop drawing if out of bounds
   if (y >= TFT_HEIGHT) {
     return false;
+  }
+
+  if (drawGradient) {
+    drawGradient = 0;
+
+    // Take average color of the first few pixels
+    uint16_t r = 0, g = 0, b = 0;
+    for (int i = 0; i < w * h; i++) {
+      r = (r * i + ((bitmap[i] >> 11) & 0x1F)) / (i + 1);
+      g = (g * i + ((bitmap[i] >> 5) & 0x3F)) / (i + 1);
+      b = (b * i + (bitmap[i] & 0x1F)) / (i + 1);
+
+    }
+
+    // Draw gradient to black
+    for (int y = 0; y < 290; y++) {
+      double grad = (290 - y) / (double) 290;
+      uint8_t rGrad = r * grad;
+      uint8_t gGrad = g * grad;
+      uint8_t bGrad = b * grad;
+      uint16_t col = (rGrad << 11) | (gGrad << 5) | bGrad;
+
+      screen.drawFastHLine(0, y, TFT_WIDTH, col);
+    }
   }
 
   screen.drawRGBBitmap(x, y, bitmap, w, h);
@@ -404,13 +430,6 @@ void loop(){
     getAuth(true, "");
   }
 
-  if (playbackBar.progress == playbackBar.duration) {
-    playbackBar.progress = 0;
-    playbackBar.duration = 1;
-    getCurrentlyPlaying();
-    return;
-  }
-
   if (millis() - lastRequest > REQUEST_RATE) {
     lastRequest = millis();
     Serial.println("polled");
@@ -423,6 +442,16 @@ void loop(){
     if (newSong) {
       // Clear album art and song/artist text
       screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
+      // Close playback bar wave when switching songs
+      playbackBar.setPlayState(false);
+      playbackBar.draw(screen, 1);
+      playbackBar.progress = 0;
+      playbackBar.draw(screen, 1);
+
+      if (getAlbumArt()) {
+        drawGradient = 1;
+        TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
+      }
 
       // Rewrite song/artist text
       screen.setCursor(10,240);
@@ -431,20 +460,7 @@ void loop(){
       screen.println(song.songName);
       screen.setTextSize(1);
       screen.println(song.artistName);
-
-      // Close playback bar wave when switching songs
-      playbackBar.setPlayState(false);
-      playbackBar.draw(screen);
       newSong = false;
-      imageRequested = true;
-    }
-
-    // In the event of failure, continues fetching until success
-    if (imageRequested) {
-      if (getAlbumArt()) {
-        TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
-        imageRequested = false;
-      }
     }
 
     playbackBar.duration = song.durationMs;
@@ -483,5 +499,5 @@ void loop(){
     playbackBar.amplitudePercent = min(max(0, playbackBar.amplitudePercent), 100);
   }
 
-  playbackBar.draw(screen);
+  playbackBar.draw(screen, 0);
 }

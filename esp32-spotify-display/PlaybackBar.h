@@ -23,7 +23,7 @@ class PlaybackBar {
     int duration = 1;
 
     PlaybackBar(int x, int y, int width, int height, int amplitude, float period, int drawRateMs);
-    void draw(DFRobot_ST7789_240x320_HW_SPI& screen);
+    void draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force);
     void setPlayState(bool state);
 };
 
