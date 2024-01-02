@@ -331,16 +331,35 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
 
     }
 
-    // Draw gradient to black
-    for (int y = 0; y < 290; y++) {
-      double grad = (290 - y) / (double) 290;
-      uint8_t rGrad = r * grad;
-      uint8_t gGrad = g * grad;
-      uint8_t bGrad = b * grad;
-      uint16_t col = (rGrad << 11) | (gGrad << 5) | bGrad;
+    uint16_t* gradBmp = (uint16_t*) malloc(sizeof(uint16_t) * 300 * 80);
 
-      screen.drawFastHLine(0, y, TFT_WIDTH, col);
+    for (int y = 0; y < 300; y++) {
+
+      for (int x = 0; x < 80; x++) {
+        double grad = (300 - y - random(0, 25)) / (double) 300;
+        grad = grad < 0 ? 0 : grad;
+        uint8_t rGrad = r * grad;
+        uint8_t gGrad = g * grad;
+        uint8_t bGrad = b * grad;
+        gradBmp[y*80 + x] = (rGrad << 11) | (gGrad << 5) | bGrad;
+      }
     }
+
+    for (int i = 0; i < TFT_WIDTH; i += 80) {
+      screen.drawRGBBitmap(i, 0, gradBmp, 80, 300);
+    }
+    free(gradBmp);
+
+    // // Draw gradient to black
+    // for (int y = 0; y < 290; y++) {
+    //   double grad = (290 - y) / (double) 290;
+    //   uint8_t rGrad = r * grad;
+    //   uint8_t gGrad = g * grad;
+    //   uint8_t bGrad = b * grad;
+    //   uint16_t col = (rGrad << 11) | (gGrad << 5) | bGrad;
+
+    //   screen.drawFastHLine(0, y, TFT_WIDTH, col);
+    // }
   }
 
   screen.drawRGBBitmap(x, y, bitmap, w, h);
