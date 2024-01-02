@@ -310,7 +310,21 @@ bool updateVolume() {
 
 // ------------------------------- TJPG -------------------------------
 
-bool drawGradient = 1;
+bool drawGradientFlag = 1;
+uint16_t* gradBmp = NULL;
+
+void drawGradient(int yStart, int yLim) {
+  for (int y = yStart; y < yLim; y++) {
+    for (int x = 0; x < TFT_WIDTH; x++) {
+
+      bool overlapX = x == IMG_X;
+      bool overlapY = y >= IMG_Y && y < IMG_Y + 150;
+      if (overlapX && overlapY) x += 150;
+      screen.drawPixel(x, y, gradBmp[y * 80 + x % 80]);
+    }
+    yield();
+  }
+}
 
 // Callback for TJpg draw function
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
@@ -319,8 +333,8 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
     return false;
   }
 
-  if (drawGradient) {
-    drawGradient = 0;
+  if (drawGradientFlag) {
+    drawGradientFlag = 0;
 
     // Take average color of the first few pixels
     uint16_t r = 0, g = 0, b = 0;
@@ -328,13 +342,13 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
       r = (r * i + ((bitmap[i] >> 11) & 0x1F)) / (i + 1);
       g = (g * i + ((bitmap[i] >> 5) & 0x3F)) / (i + 1);
       b = (b * i + (bitmap[i] & 0x1F)) / (i + 1);
-
     }
 
-    uint16_t* gradBmp = (uint16_t*) malloc(sizeof(uint16_t) * 300 * 80);
+    // Dont draw gradient if its too dark
+    if (r + g + b < 5) goto skipAlloc;
 
+    gradBmp = (uint16_t*) malloc(sizeof(uint16_t) * 300 * 80);
     for (int y = 0; y < 300; y++) {
-
       for (int x = 0; x < 80; x++) {
         double grad = (300 - y - random(0, 25)) / (double) 300;
         grad = grad < 0 ? 0 : grad;
@@ -344,24 +358,29 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
         gradBmp[y*80 + x] = (rGrad << 11) | (gGrad << 5) | bGrad;
       }
     }
-
-    for (int i = 0; i < TFT_WIDTH; i += 80) {
-      screen.drawRGBBitmap(i, 0, gradBmp, 80, 300);
-    }
-    free(gradBmp);
-
-    // // Draw gradient to black
-    // for (int y = 0; y < 290; y++) {
-    //   double grad = (290 - y) / (double) 290;
-    //   uint8_t rGrad = r * grad;
-    //   uint8_t gGrad = g * grad;
-    //   uint8_t bGrad = b * grad;
-    //   uint16_t col = (rGrad << 11) | (gGrad << 5) | bGrad;
-
-    //   screen.drawFastHLine(0, y, TFT_WIDTH, col);
-    // }
   }
 
+skipAlloc:
+  if (gradBmp) {
+    int yLim, yStart;
+    if (x == IMG_X) {
+      yLim = y + h;
+      yStart = y == IMG_Y ? 0 : y;
+
+    } else if (x == IMG_X + 150 - h) {
+      yLim = 300;
+      yStart = y + h;
+
+    } else goto draw;
+
+    drawGradient(yStart, yLim);
+    if (y == IMG_Y + 150) {
+      free(gradBmp);
+      gradBmp = NULL;
+    }
+  }
+
+draw:
   screen.drawRGBBitmap(x, y, bitmap, w, h);
   return true;
 }
@@ -459,6 +478,12 @@ void loop(){
     lastResponse = millis();
     readFlag = false;
     if (newSong) {
+
+      if (gradBmp) {
+        free(gradBmp);
+        gradBmp = NULL;
+      }
+
       // Clear album art and song/artist text
       screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
       // Close playback bar wave when switching songs
@@ -468,8 +493,8 @@ void loop(){
       playbackBar.draw(screen, 1);
 
       if (getAlbumArt()) {
-        drawGradient = 1;
-        TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
+        drawGradientFlag = 1;
+        TJpgDec.drawFsJpg(IMG_X, IMG_Y, IMG_PATH, LittleFS);
       }
 
       // Rewrite song/artist text
