@@ -4,7 +4,6 @@
 
 class PlaybackBar {
   private:
-    DFRobot_ST7789_240x320_HW_SPI screen;
     bool playing = 1;
     bool playStateFlag = 0;
     uint16_t color = COLOR_RGB565_WHITE;
@@ -23,8 +22,8 @@ class PlaybackBar {
     int progress = 0;
     int duration = 1;
 
-    PlaybackBar(DFRobot_ST7789_240x320_HW_SPI screen, int x, int y, int width, int height, int amplitude, float period, int drawRateMs);
-    void draw();
+    PlaybackBar(int x, int y, int width, int height, int amplitude, float period, int drawRateMs);
+    void draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force);
     void setPlayState(bool state);
 };
 

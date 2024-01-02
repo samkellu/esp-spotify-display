@@ -17,6 +17,7 @@
   #define _ASYNC_HTTPS_LOGLEVEL_      1
   #include <AsyncHTTPSRequest_Generic.h>
   #include <WiFi.h>
+  #include <WiFiClientSecure.h>
   #include <WebServer.h>
 #endif
 
@@ -28,7 +29,9 @@
 #define TFT_DC        4         // D4
 #define TFT_WIDTH     240
 #define TFT_HEIGHT    320
-#define REQUEST_RATE  20000     // ms
+#define IMG_Y         40
+#define IMG_X         45
+#define REQUEST_RATE  7000     // ms
 #define IMG_PATH      "/img.jpg"
 
 #define DEBUG         1

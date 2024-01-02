@@ -3,6 +3,7 @@
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, 50);
 WebServer server(80);
+WiFiClientSecure client;
 
 // TODO - when have access to hardware again, move to respective functions
 //        or see if can use just one
@@ -59,6 +60,9 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   auth.accessToken = doc["access_token"].as<String>();
   auth.refreshToken = doc["refresh_token"].as<String>();
   auth.expiry = millis() + 1000 * doc["expires_in"].as<int>();
+  #ifdef DEBUG
+    Serial.println("Successfully got access tokens!");
+  #endif
   accessTokenSet = true;
 }
 
@@ -182,20 +186,55 @@ bool getCurrentlyPlaying() {
 
 // ------------------------------- GET ALBUM ART -------------------------------
 
-// TODO - convert to buffered as images are over 5kB in size 
-void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
-  // Fail if client hasnt finished reading or response failed
+bool getAlbumArt() {
+  const char* host  = "i.scdn.co";
+  const String url  = song.imgUrl.substring(17);
+  uint16_t port     = 443;
 
-  // TODO - I think removing this should makie this function better in a buffered manner, 
-  // check on real hardware 
-
-  // if (readyState != readyStateDone) return;
-  if (request->responseHTTPcode() != 200) {
-    imageRequested = false;
+  if (!client.connect(host, port)) {
     #ifdef DEBUG
-      Serial.println("An error occurred: HTTP " + request->responseHTTPcode());
+      Serial.println("Connection failed!");
     #endif
-    return;
+    return false;
+  }
+
+  String req = "GET " + url + " HTTP/1.0\r\nHost: " +
+                host + "\r\nCache-Control: no-cache\r\n";
+
+  if (client.println(req) == 0) {
+    #ifdef DEBUG
+      Serial.println("Failed to send request...");
+    #endif
+    return false;
+  }
+
+  String ln     = client.readStringUntil('\r');
+  int start     = ln.indexOf(' ') + 1;
+  int end       = ln.indexOf(' ', start);
+  String status = ln.substring(start, end);
+
+  if (strcmp(status.c_str(), "200") != 0) {
+    #ifdef DEBUG
+      Serial.println("An error occurred: HTTP " + status);
+    #endif
+    client.stop();
+    return false;
+  }
+
+  if (!client.find("Content-Length:")) {
+    #ifdef DEBUG
+      Serial.println("Response had not content-length header.");
+    #endif
+    return false;
+  }
+
+  int numBytes = client.parseInt();
+  if (!client.find("\r\n\r\n")) {
+    #ifdef DEBUG
+      Serial.println("Invalid response from server.");
+    #endif
+    client.stop();
+    return false;
   }
 
   File f = LittleFS.open(IMG_PATH, "w+");
@@ -203,37 +242,31 @@ void albumArtCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
     #ifdef DEBUG
       Serial.println("Failed to write image to file...");
     #endif
-    return;
-  }
-
-  // Write image to file
-  // TODO - figure out buffered writing and reading from client, may need to do a poll loop here
-  char* img = request->responseLongText();
-  f.write((uint8_t*) img, strlen(img));
-  f.close();
-  #ifdef DEBUG
-    Serial.println("Wrote image to file");
-  #endif
-  imageDrawFlag = true;
-  return;
-}
-
-bool getAlbumArt() {
-  // Fail if client isnt ready
-  if (httpsImg.readyState() != readyStateUnsent && httpsImg.readyState() != readyStateDone) return false;
-
-  if (httpsImg.open("GET", song.imgUrl.c_str())) {
-    httpsImg.onReadyStateChange(albumArtCB);
-    httpsImg.setReqHeader("Cache-Control", "no-cache");
-    httpsImg.send();
-    return true;
-
-  } else {
-    #ifdef DEBUG
-      Serial.println("Connection failed!");
-    #endif
     return false;
   }
+
+  int offset = 0;
+  uint8_t buf[128];
+  while (offset < numBytes) {
+
+    size_t available = client.available();
+
+    if (available) {
+      int bytes = client.readBytes(buf, min(available, sizeof(buf)));
+      f.write(buf, bytes);
+      offset += bytes;
+    }
+
+    // Reset WDT
+    yield();
+  }
+
+  f.close();
+  #ifdef DEBUG
+    Serial.printf("Wrote to file %d/%d bytes\n", offset, numBytes);
+  #endif
+  client.stop();
+  return true;
 }
 
 // ------------------------------- VOLUME CONTROL -------------------------------
@@ -255,7 +288,7 @@ bool updateVolume() {
 
   char* format = "https://api.spotify.com/v1/me/player/volume?volume_percent=%d";
   char buf[128];
-  sprintf(buf, format, song.volume_percent);
+  sprintf(buf, format, song.volume);
 
   if (httpsVolume.open("PUT", buf)) {
     sprintf(buf, "Bearer %s", auth.accessToken);
@@ -277,6 +310,22 @@ bool updateVolume() {
 
 // ------------------------------- TJPG -------------------------------
 
+bool drawGradientFlag = 1;
+uint16_t* gradBmp = NULL;
+
+void drawGradient(int yStart, int yLim) {
+  for (int y = yStart; y < yLim; y++) {
+    for (int x = 0; x < TFT_WIDTH; x++) {
+
+      bool overlapX = x == IMG_X;
+      bool overlapY = y >= IMG_Y && y < IMG_Y + 150;
+      if (overlapX && overlapY) x += 150;
+      screen.drawPixel(x, y, gradBmp[y * 80 + x % 80]);
+    }
+    yield();
+  }
+}
+
 // Callback for TJpg draw function
 bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   // Stop drawing if out of bounds
@@ -284,6 +333,54 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
     return false;
   }
 
+  if (drawGradientFlag) {
+    drawGradientFlag = 0;
+
+    // Take average color of the first few pixels
+    uint16_t r = 0, g = 0, b = 0;
+    for (int i = 0; i < w * h; i++) {
+      r = (r * i + ((bitmap[i] >> 11) & 0x1F)) / (i + 1);
+      g = (g * i + ((bitmap[i] >> 5) & 0x3F)) / (i + 1);
+      b = (b * i + (bitmap[i] & 0x1F)) / (i + 1);
+    }
+
+    // Dont draw gradient if its too dark
+    if (r + g + b < 5) goto skipAlloc;
+
+    gradBmp = (uint16_t*) malloc(sizeof(uint16_t) * 300 * 80);
+    for (int y = 0; y < 300; y++) {
+      for (int x = 0; x < 80; x++) {
+        double grad = (300 - y - random(0, 25)) / (double) 300;
+        grad = grad < 0 ? 0 : grad;
+        uint8_t rGrad = r * grad;
+        uint8_t gGrad = g * grad;
+        uint8_t bGrad = b * grad;
+        gradBmp[y*80 + x] = (rGrad << 11) | (gGrad << 5) | bGrad;
+      }
+    }
+  }
+
+skipAlloc:
+  if (gradBmp) {
+    int yLim, yStart;
+    if (x == IMG_X) {
+      yLim = y + h;
+      yStart = y == IMG_Y ? 0 : y;
+
+    } else if (x == IMG_X + 150 - h) {
+      yLim = 300;
+      yStart = y + h;
+
+    } else goto draw;
+
+    drawGradient(yStart, yLim);
+    if (y == IMG_Y + 150) {
+      free(gradBmp);
+      gradBmp = NULL;
+    }
+  }
+
+draw:
   screen.drawRGBBitmap(x, y, bitmap, w, h);
   return true;
 }
@@ -303,9 +400,6 @@ void webServerHandleRoot() {
 void webServerHandleCallback() {
   if (server.arg("code") != "") {
     if (getAuth(false, server.arg("code"))) {
-      #ifdef DEBUG
-        Serial.println("Successfully got access tokens!");
-      #endif
       server.send(200, "text/html", "Login complete! you may close this tab.\r\n");
     
     } else {
@@ -331,6 +425,8 @@ void setup() {
   #ifdef DEBUG
     Serial.begin(115200);
   #endif
+
+  client.setInsecure();
 
   // Initialise LittleFS
   if (!LittleFS.begin()) {
@@ -359,7 +455,7 @@ void setup() {
 
 void loop(){
   server.handleClient();
-  yield();
+  delay(20);
 
   if (!accessTokenSet) {
     screen.setCursor(0,0);
@@ -372,7 +468,7 @@ void loop(){
     getAuth(true, "");
   }
 
-  if (millis() - lastRequest > REQUEST_RATE || playbackBar.progress == playbackBar.duration) {
+  if (millis() - lastRequest > REQUEST_RATE) {
     lastRequest = millis();
     Serial.println("polled");
     getCurrentlyPlaying();
@@ -383,8 +479,23 @@ void loop(){
     readFlag = false;
     if (newSong) {
 
+      if (gradBmp) {
+        free(gradBmp);
+        gradBmp = NULL;
+      }
+
       // Clear album art and song/artist text
       screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
+      // Close playback bar wave when switching songs
+      playbackBar.setPlayState(false);
+      playbackBar.draw(screen, 1);
+      playbackBar.progress = 0;
+      playbackBar.draw(screen, 1);
+
+      if (getAlbumArt()) {
+        drawGradientFlag = 1;
+        TJpgDec.drawFsJpg(IMG_X, IMG_Y, IMG_PATH, LittleFS);
+      }
 
       // Rewrite song/artist text
       screen.setCursor(10,240);
@@ -393,18 +504,7 @@ void loop(){
       screen.println(song.songName);
       screen.setTextSize(1);
       screen.println(song.artistName);
-
-      // Close playback bar wave when switching songs
-      playbackBar.setPlayState(false);
-      playbackBar.draw();
-      imageDrawFlag = false;
-      imageRequested = false;
       newSong = false;
-    }
-
-    // In the event of failure, continues fetching until success
-    if (!imageRequested) {
-      imageRequested = getAlbumArt();
     }
 
     playbackBar.duration = song.durationMs;
@@ -417,24 +517,24 @@ void loop(){
     playbackBar.progress = min(interpolatedTime, song.durationMs);
   }
 
-  // Read potentiometer value at fixed interval
-  if (millis() - lastPotRead > POT_READ_RATE) {
-    int newVol = 100 * (analogRead(POT) / (float) 1023);
+  // // Read potentiometer value at fixed interval
+  // if (millis() - lastPotRead > POT_READ_RATE) {
+  //   int newVol = 100 * (analogRead(POT) / (float) 1023);
 
-    // Account for pot wobble
-    if (abs(song.volume - newVol) > 2) {
-      lastPotChange = millis();
-      song.volume = newVol;
-    }
+  //   // Account for pot wobble
+  //   if (abs(song.volume - newVol) > 2) {
+  //     lastPotChange = millis();
+  //     song.volume = newVol;
+  //   }
 
-    lastPotRead = millis();
-  }
+  //   lastPotRead = millis();
+  // }
 
-  // Only send api POST when pot hasnt changed for a while
-  if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT) {
-    lastPotChange = 0;
-    updateVolume();
-  }
+  // // Only send api POST when pot hasnt changed for a while
+  // if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT) {
+  //   lastPotChange = 0;
+  //   updateVolume();
+  // }
 
   // Slowly change amplitude of playback bar wave
   if (playbackBar.amplitudePercent != song.volume) {
@@ -443,10 +543,5 @@ void loop(){
     playbackBar.amplitudePercent = min(max(0, playbackBar.amplitudePercent), 100);
   }
 
-  playbackBar.draw();
-
-  if (imageDrawFlag) {
-    TJpgDec.drawFsJpg((TFT_WIDTH - song.width/2) / 2, 40, IMG_PATH, LittleFS);
-    imageDrawFlag = false;
-  }
+  playbackBar.draw(screen, 0);
 }
