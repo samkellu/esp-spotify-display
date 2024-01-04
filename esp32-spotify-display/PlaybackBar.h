@@ -16,6 +16,8 @@ class PlaybackBar {
     int prevAmplitude;
     uint32_t curTime = 0;
     uint32_t lastDraw = 0;
+    uint32_t lastUpdate = 0;
+    int lastProgress = 0;
 
   public:
     int amplitudePercent;
@@ -25,6 +27,7 @@ class PlaybackBar {
     PlaybackBar(int x, int y, int width, int height, int amplitude, float period, int drawRateMs);
     void draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force);
     void setPlayState(bool state);
+    void updateProgress(int val);
 };
 
 #endif

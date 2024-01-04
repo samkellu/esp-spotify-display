@@ -325,6 +325,9 @@ void drawGradient(int yStart, int yLim) {
       screen.drawPixel(x, y, gradBmp[y * 80 + x % 80]);
       yield();
     }
+
+    // Animate playback bar every row
+    playbackBar.draw(screen, 0);
   }
 }
 
@@ -376,6 +379,9 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
     } else if (x == IMG_X) {
       drawGradient(y, y + h);
     }
+
+  } else {
+    playbackBar.draw(screen, 0);
   }
 
 draw:
@@ -415,7 +421,6 @@ void webServerHandleCallback() {
 
 // Control timers
 uint32_t lastRequest    = 0;
-uint32_t lastResponse   = 0;
 uint32_t lastPotRead    = 0;
 uint32_t lastPotChange  = 0;
 uint32_t lastImgRequest = 0;
@@ -476,7 +481,6 @@ void loop(){
   }
 
   if (readFlag) {
-    lastResponse = millis();
     readFlag = false;
     if (newSong) {
 
@@ -484,8 +488,6 @@ void loop(){
       screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
       // Close playback bar wave when switching songs
       playbackBar.setPlayState(false);
-      playbackBar.draw(screen, 1);
-      playbackBar.progress = 0;
       playbackBar.draw(screen, 1);
 
       screen.setCursor(10,240);
@@ -496,6 +498,11 @@ void loop(){
       newSong = false;
       imageSet = false;
     }
+
+    playbackBar.duration = song.durationMs;
+    playbackBar.updateProgress(song.progressMs);
+    playbackBar.setPlayState(song.isPlaying);
+    playbackBar.draw(screen, 1);
 
     if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT) {
       lastImgRequest = millis();
@@ -520,14 +527,6 @@ void loop(){
       }
     }
 
-    playbackBar.duration = song.durationMs;
-    playbackBar.progress = song.progressMs;
-    playbackBar.setPlayState(song.isPlaying);
-
-  } else {
-    // Interpolate playback bar progress between api calls
-    int interpolatedTime = (int) (millis() - lastResponse + song.progressMs);
-    playbackBar.progress = min(interpolatedTime, song.durationMs);
   }
 
   // // Read potentiometer value at fixed interval
