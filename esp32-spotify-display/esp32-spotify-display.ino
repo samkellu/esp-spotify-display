@@ -312,80 +312,50 @@ bool updateVolume() {
 
 // ------------------------------- TJPG -------------------------------
 
-bool drawGradientFlag = 1;
-uint16_t* gradBmp = NULL;
+uint16_t* albumBmp = NULL;
 
-void drawGradient(int yStart, int yLim) {
-  for (int y = yStart; y < yLim; y++) {
+void drawBmp(int imgX, int imgY, int imgW, int imgH) {
+  // Take average color of the first few rows of the image
+  uint16_t r = 0, g = 0, b = 0;
+  for (int i = 0; i < imgW * 10; i++) {
+    r = (r * i + ((albumBmp[i] >> 11) & 0x1F)) / (i + 1);
+    g = (g * i + ((albumBmp[i] >> 5) & 0x3F)) / (i + 1);
+    b = (b * i + (albumBmp[i] & 0x1F)) / (i + 1);
+  }
+
+  for (int y = 0; y < 300; y++) {
     for (int x = 0; x < TFT_WIDTH; x++) {
-
-      bool overlapX = x == IMG_X;
-      bool overlapY = y >= IMG_Y && y < IMG_Y + 150;
-      if (overlapX && overlapY) x += 150;
-      screen.drawPixel(x, y, gradBmp[y * 80 + x % 80]);
       yield();
-    }
 
-    // Animate playback bar every row
-    playbackBar.draw(screen, 0);
-  }
-}
+      bool overlapX = x >= imgX && x < imgX + imgW;
+      bool overlapY = y >= imgY && y < imgY + imgH;
 
-// Callback for TJpg draw function
-bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-  // Stop drawing if out of bounds
-  if (y >= TFT_HEIGHT) {
-    return false;
-  }
+      if (overlapX && overlapY) {
+        int idx = (y - imgY) * imgW + ((x - imgX) % imgW);
+        screen.drawPixel(x, y, albumBmp[idx]);
+        continue;
+      }
 
-  if (drawGradientFlag) {
-    drawGradientFlag = 0;
-
-    // Take average color of the first few pixels
-    uint16_t r = 0, g = 0, b = 0;
-    for (int i = 0; i < w * h; i++) {
-      r = (r * i + ((bitmap[i] >> 11) & 0x1F)) / (i + 1);
-      g = (g * i + ((bitmap[i] >> 5) & 0x3F)) / (i + 1);
-      b = (b * i + (bitmap[i] & 0x1F)) / (i + 1);
-    }
-
-    // Dont draw gradient if its too dark
-    if (r + g + b < 5) {
-      free(gradBmp);
-      gradBmp = NULL;
-      goto draw;
-    }
-
-    for (int y = 0; y < 300; y++) {
-      for (int x = 0; x < 80; x++) {
+      // Dont draw gradient if its too dark
+      if (r + g + b > 5) {
         double grad = (300 - y - random(0, 25)) / (double) 300;
         grad = grad < 0 ? 0 : grad;
         uint8_t rGrad = r * grad;
         uint8_t gGrad = g * grad;
         uint8_t bGrad = b * grad;
-        gradBmp[y*80 + x] = (rGrad << 11) | (gGrad << 5) | bGrad;
-        yield();
+        screen.drawPixel(x, y, (rGrad << 11) | (gGrad << 5) | bGrad);
       }
     }
-  }
-
-  if (gradBmp) {
-    if (x == IMG_X && y == IMG_Y) {
-      drawGradient(0, y + h);
-
-    } else if (x == IMG_X + 150 - w && y == IMG_Y + 150 - h) {
-      drawGradient(y + h, 300);
-
-    } else if (x == IMG_X) {
-      drawGradient(y, y + h);
-    }
-
-  } else {
     playbackBar.draw(screen, 0);
   }
+}
 
-draw:
-  screen.drawRGBBitmap(x, y, bitmap, w, h);
+// Callback for TJpg draw function
+bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+  for (int i = 0; i < w * h; i++) {
+    albumBmp[y * 150 + (i % w) + x] = bitmap[i];
+    if (i % w == w-1) y++;
+  }
   return true;
 }
 
@@ -454,7 +424,7 @@ void setup() {
   server.on("/callback", webServerHandleCallback);
   server.begin();
 
-  TJpgDec.setCallback(drawBmp);
+  TJpgDec.setCallback(processBmp);
   TJpgDec.setJpgScale(2);
 }
 
@@ -508,15 +478,14 @@ void loop(){
       lastImgRequest = millis();
       if (getAlbumArt()) {
         imageSet = true;
-        drawGradientFlag = 1;
         // Stores bitmap for gradient background
-        gradBmp = (uint16_t*) malloc(sizeof(uint16_t) * 300 * 80);
-        TJpgDec.drawFsJpg(IMG_X, IMG_Y, IMG_PATH, LittleFS);
+        Serial.println(ESP.getFreeHeap());
+        Serial.println(150 * 150 * sizeof(uint16_t));
 
-        if (gradBmp) {
-          free(gradBmp);
-          gradBmp = NULL;
-        }
+        albumBmp = (uint16_t*) malloc(sizeof(uint16_t) * 150 * 150);
+        TJpgDec.drawFsJpg(0, 0, IMG_PATH, LittleFS);
+        drawBmp(IMG_X, IMG_Y, 150, 150);
+        free(albumBmp);
 
         // Rewrite song/artist text
         screen.setCursor(10,240);
