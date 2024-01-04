@@ -33,6 +33,7 @@
 #define IMG_X         45
 #define REQUEST_RATE  7000     // ms
 #define IMG_PATH      "/img.jpg"
+#define REQ_TIMEOUT   3000     // ms
 
 #define DEBUG         1
 

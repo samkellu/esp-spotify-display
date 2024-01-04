@@ -18,7 +18,7 @@ AuthInfo auth;
 bool accessTokenSet = false;
 bool readFlag       = false;
 bool newSong        = false;
-bool imageRequested = false;
+bool imageSet       = false;
 bool imageDrawFlag  = false;
 
 // Connects to the network specified in credentials.h
@@ -321,8 +321,8 @@ void drawGradient(int yStart, int yLim) {
       bool overlapY = y >= IMG_Y && y < IMG_Y + 150;
       if (overlapX && overlapY) x += 150;
       screen.drawPixel(x, y, gradBmp[y * 80 + x % 80]);
+      yield();
     }
-    yield();
   }
 }
 
@@ -345,9 +345,8 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
     }
 
     // Dont draw gradient if its too dark
-    if (r + g + b < 5) goto skipAlloc;
+    if (r + g + b < 5) goto skipGrad;
 
-    gradBmp = (uint16_t*) malloc(sizeof(uint16_t) * 300 * 80);
     for (int y = 0; y < 300; y++) {
       for (int x = 0; x < 80; x++) {
         double grad = (300 - y - random(0, 25)) / (double) 300;
@@ -356,29 +355,24 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
         uint8_t gGrad = g * grad;
         uint8_t bGrad = b * grad;
         gradBmp[y*80 + x] = (rGrad << 11) | (gGrad << 5) | bGrad;
+        yield();
       }
     }
   }
 
-skipAlloc:
-  if (gradBmp) {
-    int yLim, yStart;
-    if (x == IMG_X) {
-      yLim = y + h;
-      yStart = y == IMG_Y ? 0 : y;
+skipGrad:
+  int yLim, yStart;
+  if (x == IMG_X) {
+    yLim = y + h;
+    yStart = y == IMG_Y ? 0 : y;
 
-    } else if (x == IMG_X + 150 - h) {
-      yLim = 300;
-      yStart = y + h;
+  } else if (x == IMG_X + 150 - h) {
+    yLim = 300;
+    yStart = y + h;
 
-    } else goto draw;
+  } else goto draw;
 
-    drawGradient(yStart, yLim);
-    if (y == IMG_Y + 150) {
-      free(gradBmp);
-      gradBmp = NULL;
-    }
-  }
+  drawGradient(yStart, yLim);
 
 draw:
   screen.drawRGBBitmap(x, y, bitmap, w, h);
@@ -416,10 +410,11 @@ void webServerHandleCallback() {
 // ------------------------------- MAIN -------------------------------
 
 // Control timers
-uint32_t lastRequest   = 0;
-uint32_t lastResponse  = 0;
-uint32_t lastPotRead   = 0;
-uint32_t lastPotChange = 0;
+uint32_t lastRequest    = 0;
+uint32_t lastResponse   = 0;
+uint32_t lastPotRead    = 0;
+uint32_t lastPotChange  = 0;
+uint32_t lastImgRequest = 0;
 
 void setup() {
   #ifdef DEBUG
@@ -470,7 +465,6 @@ void loop(){
 
   if (millis() - lastRequest > REQUEST_RATE) {
     lastRequest = millis();
-    Serial.println("polled");
     getCurrentlyPlaying();
   }
 
@@ -478,11 +472,6 @@ void loop(){
     lastResponse = millis();
     readFlag = false;
     if (newSong) {
-
-      if (gradBmp) {
-        free(gradBmp);
-        gradBmp = NULL;
-      }
 
       // Clear album art and song/artist text
       screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
@@ -492,12 +481,6 @@ void loop(){
       playbackBar.progress = 0;
       playbackBar.draw(screen, 1);
 
-      if (getAlbumArt()) {
-        drawGradientFlag = 1;
-        TJpgDec.drawFsJpg(IMG_X, IMG_Y, IMG_PATH, LittleFS);
-      }
-
-      // Rewrite song/artist text
       screen.setCursor(10,240);
       screen.setTextSize(2);
       screen.setTextWrap(false);
@@ -505,6 +488,27 @@ void loop(){
       screen.setTextSize(1);
       screen.println(song.artistName);
       newSong = false;
+      imageSet = false;
+    }
+
+    if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT) {
+      lastImgRequest = millis();
+      if (getAlbumArt()) {
+        imageSet = true;
+        drawGradientFlag = 1;
+        // Stores bitmap for gradient background
+        gradBmp = (uint16_t*) malloc(sizeof(uint16_t) * 300 * 80);
+        TJpgDec.drawFsJpg(IMG_X, IMG_Y, IMG_PATH, LittleFS);
+        free(gradBmp);
+
+        // Rewrite song/artist text
+        screen.setCursor(10,240);
+        screen.setTextSize(2);
+        screen.setTextWrap(false);
+        screen.println(song.songName);
+        screen.setTextSize(1);
+        screen.println(song.artistName);
+      }
     }
 
     playbackBar.duration = song.durationMs;
