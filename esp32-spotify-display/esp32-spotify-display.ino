@@ -186,6 +186,7 @@ bool getCurrentlyPlaying() {
 
 // ------------------------------- GET ALBUM ART -------------------------------
 
+// Synchronous due to large file size limitations
 bool getAlbumArt() {
   const char* host  = "i.scdn.co";
   const String url  = song.imgUrl.substring(17);
@@ -216,6 +217,7 @@ bool getAlbumArt() {
   if (strcmp(status.c_str(), "200") != 0) {
     #ifdef DEBUG
       Serial.println("An error occurred: HTTP " + status);
+      Serial.println(url);
     #endif
     client.stop();
     return false;
@@ -345,7 +347,11 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
     }
 
     // Dont draw gradient if its too dark
-    if (r + g + b < 5) goto skipGrad;
+    if (r + g + b < 5) {
+      free(gradBmp);
+      gradBmp = NULL;
+      goto draw;
+    }
 
     for (int y = 0; y < 300; y++) {
       for (int x = 0; x < 80; x++) {
@@ -360,19 +366,17 @@ bool drawBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
     }
   }
 
-skipGrad:
-  int yLim, yStart;
-  if (x == IMG_X) {
-    yLim = y + h;
-    yStart = y == IMG_Y ? 0 : y;
+  if (gradBmp) {
+    if (x == IMG_X && y == IMG_Y) {
+      drawGradient(0, y + h);
 
-  } else if (x == IMG_X + 150 - h) {
-    yLim = 300;
-    yStart = y + h;
+    } else if (x == IMG_X + 150 - w && y == IMG_Y + 150 - h) {
+      drawGradient(y + h, 300);
 
-  } else goto draw;
-
-  drawGradient(yStart, yLim);
+    } else if (x == IMG_X) {
+      drawGradient(y, y + h);
+    }
+  }
 
 draw:
   screen.drawRGBBitmap(x, y, bitmap, w, h);
@@ -434,6 +438,7 @@ void setup() {
   // Initialise tft display
   screen.begin();
   screen.fillScreen(COLOR_RGB565_BLACK);
+  screen.setTextWrap(false);
 
   // Initialise wifi
   connect(SSID, PASSPHRASE);
@@ -450,7 +455,7 @@ void setup() {
 
 void loop(){
   server.handleClient();
-  delay(20);
+  yield();
 
   if (!accessTokenSet) {
     screen.setCursor(0,0);
@@ -461,11 +466,13 @@ void loop(){
 
   if (millis() > auth.expiry) {
     getAuth(true, "");
+    yield();
   }
 
   if (millis() - lastRequest > REQUEST_RATE) {
     lastRequest = millis();
     getCurrentlyPlaying();
+    yield();
   }
 
   if (readFlag) {
@@ -483,7 +490,6 @@ void loop(){
 
       screen.setCursor(10,240);
       screen.setTextSize(2);
-      screen.setTextWrap(false);
       screen.println(song.songName);
       screen.setTextSize(1);
       screen.println(song.artistName);
@@ -499,12 +505,15 @@ void loop(){
         // Stores bitmap for gradient background
         gradBmp = (uint16_t*) malloc(sizeof(uint16_t) * 300 * 80);
         TJpgDec.drawFsJpg(IMG_X, IMG_Y, IMG_PATH, LittleFS);
-        free(gradBmp);
+
+        if (gradBmp) {
+          free(gradBmp);
+          gradBmp = NULL;
+        }
 
         // Rewrite song/artist text
         screen.setCursor(10,240);
         screen.setTextSize(2);
-        screen.setTextWrap(false);
         screen.println(song.songName);
         screen.setTextSize(1);
         screen.println(song.artistName);
