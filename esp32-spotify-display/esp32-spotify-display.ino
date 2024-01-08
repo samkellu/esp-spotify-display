@@ -19,6 +19,7 @@ bool accessTokenSet = false;
 bool readFlag       = false;
 bool newSong        = false;
 bool imageSet       = false;
+bool textSet        = false;
 bool imageDrawFlag  = false;
 
 // Connects to the network specified in credentials.h
@@ -346,6 +347,13 @@ void drawBmp(int imgX, int imgY, int imgW, int imgH) {
         screen.drawPixel(x, y, (rGrad << 11) | (gGrad << 5) | bGrad);
       }
     }
+
+    // Dont overwrite text with background fill
+    if (y > TEXT_Y) {
+      writeSongText(screen, COLOR_RGB565_WHITE);
+    }
+
+    // Animate playback bar
     playbackBar.draw(screen, 0);
   }
 }
@@ -385,6 +393,17 @@ void webServerHandleCallback() {
       Serial.println("An error occurred. Server provided no code arg.");
     #endif
   }
+}
+
+// ------------------------------- TEXT -------------------------------
+
+void writeSongText(DFRobot_ST7789_240x320_HW_SPI& screen, uint16_t color) {
+  // Rewrite song/artist text
+  screen.setTextSize(2);
+  screen.setCursor(TEXT_X, TEXT_Y);
+  screen.print(song.songName);
+  screen.setTextSize(1);
+  screen.print(song.artistName);
 }
 
 // ------------------------------- MAIN -------------------------------
@@ -453,20 +472,15 @@ void loop(){
   if (readFlag) {
     readFlag = false;
     if (newSong) {
-
       // Clear album art and song/artist text
       screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
       // Close playback bar wave when switching songs
       playbackBar.setPlayState(false);
+      // Force draw the playback bar closing animation
       playbackBar.draw(screen, 1);
-
-      screen.setCursor(10,240);
-      screen.setTextSize(2);
-      screen.println(song.songName);
-      screen.setTextSize(1);
-      screen.println(song.artistName);
-      newSong = false;
-      imageSet = false;
+      writeSongText(screen, COLOR_RGB565_WHITE);
+      newSong  = 0;
+      imageSet = 0;
     }
 
     playbackBar.duration = song.durationMs;
@@ -477,25 +491,14 @@ void loop(){
     if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT) {
       lastImgRequest = millis();
       if (getAlbumArt()) {
-        imageSet = true;
-        // Stores bitmap for gradient background
-        Serial.println(ESP.getFreeHeap());
-        Serial.println(150 * 150 * sizeof(uint16_t));
-
+        // Process and draw background gradient and album art
         albumBmp = (uint16_t*) malloc(sizeof(uint16_t) * 150 * 150);
         TJpgDec.drawFsJpg(0, 0, IMG_PATH, LittleFS);
         drawBmp(IMG_X, IMG_Y, 150, 150);
         free(albumBmp);
-
-        // Rewrite song/artist text
-        screen.setCursor(10,240);
-        screen.setTextSize(2);
-        screen.println(song.songName);
-        screen.setTextSize(1);
-        screen.println(song.artistName);
+        imageSet = 1;
       }
     }
-
   }
 
   // // Read potentiometer value at fixed interval

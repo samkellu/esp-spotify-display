@@ -22,18 +22,20 @@
 #endif
 
 #define POT           A0
-#define POT_READ_RATE 400       // ms
-#define POT_WAIT      3000      // ms
-#define TFT_CS        15        // D6
-#define TFT_RST       2         // D5
-#define TFT_DC        4         // D4
+#define POT_READ_RATE 400        // ms
+#define POT_WAIT      3000       // ms
+#define TFT_CS        15         // D6
+#define TFT_RST       2          // D5
+#define TFT_DC        4          // D4
+#define REQUEST_RATE  7000       // ms
+#define IMG_PATH      "/img.jpg"
+#define REQ_TIMEOUT   3000       // ms
 #define TFT_WIDTH     240
 #define TFT_HEIGHT    320
 #define IMG_Y         40
 #define IMG_X         45
-#define REQUEST_RATE  7000     // ms
-#define IMG_PATH      "/img.jpg"
-#define REQ_TIMEOUT   3000     // ms
+#define TEXT_Y        240
+#define TEXT_X        0
 
 #define DEBUG         1
 
