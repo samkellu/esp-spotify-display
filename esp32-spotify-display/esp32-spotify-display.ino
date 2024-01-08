@@ -15,7 +15,9 @@ SongInfo song;
 AuthInfo auth;
 
 // Control flags
+// Forces a check on the saved refresh token in flash
 bool accessTokenSet = false;
+bool triedFileToken = false;
 bool readFlag       = false;
 bool newSong        = false;
 bool imageSet       = false;
@@ -61,13 +63,39 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   auth.accessToken = doc["access_token"].as<String>();
   auth.refreshToken = doc["refresh_token"].as<String>();
   auth.expiry = millis() + 1000 * doc["expires_in"].as<int>();
+  accessTokenSet = true;
   #ifdef DEBUG
     Serial.println("Successfully got access tokens!");
   #endif
-  accessTokenSet = true;
+
+  // Try to write refresh token to file
+  File f = LittleFS.open(TOKEN_PATH, "w");
+  if (!f) {
+    #ifdef DEBUG
+      Serial.println("Failed to write token to file...");
+    #endif
+    return;
+  }
+
+  f.print(auth.refreshToken);
+  f.close();
 }
 
-bool getAuth(bool refresh, String code) {
+bool getAuth(bool refresh, bool fromFile, String code) {
+
+  // Attempt to automatically get access token from saved refresh token
+  if (refresh && fromFile) {
+    File f = LittleFS.open(TOKEN_PATH, "r");
+    if (f) {
+      auth.refreshToken = f.readString();
+      if (auth.refreshToken.length() == 0) {
+        refresh = false;
+      }
+      Serial.println(auth.refreshToken);
+      f.close();
+    }
+  }
+
   // Fail if client is busy
   if (httpsAuth.readyState() != readyStateUnsent && httpsAuth.readyState() != readyStateDone) return false;
 
@@ -393,7 +421,7 @@ void webServerHandleRoot() {
 
 void webServerHandleCallback() {
   if (server.arg("code") != "") {
-    if (getAuth(false, server.arg("code"))) {
+    if (getAuth(/*refresh=*/false, /*fromFile=*/false, server.arg("code"))) {
       server.send(200, "text/html", "Login complete! you may close this tab.\r\n");
     
     } else {
@@ -463,6 +491,20 @@ void loop(){
   server.handleClient();
   yield();
 
+  if (!accessTokenSet && !triedFileToken) {
+    if (getAuth(/*refresh=*/true, /*fromFile=*/true, "")) {
+      uint32_t timeout = millis() + 5000;
+      while (!triedFileToken && timeout > millis()) delay(100);
+    }
+    #ifdef DEBUG
+      else {
+        Serial.println("Auth from refresh token file failed...");
+      }
+    #endif
+
+    triedFileToken = true;
+  }
+
   if (!accessTokenSet) {
     screen.setCursor(0,0);
     screen.setTextSize(2);
@@ -471,7 +513,8 @@ void loop(){
   }
 
   if (millis() > auth.expiry) {
-    getAuth(true, "");
+    auth.expiry = millis() + 10000;
+    getAuth(/*refresh=*/true, /*fromFile=*/false, "");
     yield();
   }
 
