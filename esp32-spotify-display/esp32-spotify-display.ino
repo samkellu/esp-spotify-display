@@ -318,15 +318,15 @@ uint16_t* albumBmp = NULL;
 void drawBmp(int imgX, int imgY, int imgW, int imgH) {
   // Take average color components of the first few rows of the image
   uint16_t r = 0, g = 0, b = 0, rr = 0, rg = 0, rb = 0;
-  for (int i = 0; i < imgW * 10; i++) {
+  for (int i = 0; i < imgW * 5; i++) {
 
     // Ensure average isnt black skewed too heavily
     rr = ((albumBmp[i] >> 11) & 0x1F);
     rg = ((albumBmp[i] >> 5) & 0x3F);
     rb = (albumBmp[i] & 0x1F);
-    rr = rr == 0 ? 1 : rr;
-    rg = rg == 0 ? 1 : rg;
-    rb = rb == 0 ? 1 : rb;
+    rr = rr == 0 ? r : rr;
+    rg = rg == 0 ? g : rg;
+    rb = rb == 0 ? b : rb;
 
     r = (r * i + rr) / (i + 1);
     g = (g * i + rg) / (i + 1);
