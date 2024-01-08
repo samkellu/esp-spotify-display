@@ -483,6 +483,7 @@ void setup() {
   server.on("/callback", webServerHandleCallback);
   server.begin();
 
+  // Setup TJpg settings
   TJpgDec.setCallback(processBmp);
   TJpgDec.setJpgScale(2);
 }
@@ -513,9 +514,12 @@ void loop(){
   }
 
   if (millis() > auth.expiry) {
-    auth.expiry = millis() + 10000;
     getAuth(/*refresh=*/true, /*fromFile=*/false, "");
-    yield();
+    accessTokenSet = false;
+    while (!accessTokenSet) {
+      playbackBar.draw(screen, 0);
+      delay(50);
+    }
   }
 
   if (millis() - lastRequest > REQUEST_RATE) {
@@ -532,7 +536,7 @@ void loop(){
       // Close playback bar wave when switching songs
       playbackBar.setPlayState(false);
       // Force draw the playback bar closing animation
-      playbackBar.draw(screen, 1);
+      playbackBar.draw(screen, true);
       writeSongText(screen, COLOR_RGB565_WHITE);
       newSong  = 0;
       imageSet = 0;
@@ -541,7 +545,7 @@ void loop(){
     playbackBar.duration = song.durationMs;
     playbackBar.updateProgress(song.progressMs);
     playbackBar.setPlayState(song.isPlaying);
-    playbackBar.draw(screen, 1);
+    playbackBar.draw(screen, true);
 
     if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT) {
       lastImgRequest = millis();
