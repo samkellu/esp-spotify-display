@@ -316,14 +316,26 @@ bool updateVolume() {
 uint16_t* albumBmp = NULL;
 
 void drawBmp(int imgX, int imgY, int imgW, int imgH) {
-  // Take average color of the first few rows of the image
-  uint16_t r = 0, g = 0, b = 0;
+  // Take average color components of the first few rows of the image
+  uint16_t r = 0, g = 0, b = 0, rr = 0, rg = 0, rb = 0;
   for (int i = 0; i < imgW * 10; i++) {
-    r = (r * i + ((albumBmp[i] >> 11) & 0x1F)) / (i + 1);
-    g = (g * i + ((albumBmp[i] >> 5) & 0x3F)) / (i + 1);
-    b = (b * i + (albumBmp[i] & 0x1F)) / (i + 1);
+
+    // Ensure average isnt black skewed too heavily
+    rr = ((albumBmp[i] >> 11) & 0x1F);
+    rg = ((albumBmp[i] >> 5) & 0x3F);
+    rb = (albumBmp[i] & 0x1F);
+    rr = rr == 0 ? 1 : rr;
+    rg = rg == 0 ? 1 : rg;
+    rb = rb == 0 ? 1 : rb;
+
+    r = (r * i + rr) / (i + 1);
+    g = (g * i + rg) / (i + 1);
+    b = (b * i + rb) / (i + 1);
   }
 
+  Serial.printf("r %uh\n", r);
+  Serial.printf("g %uh\n", g);
+  Serial.printf("b %uh\n", b);
   for (int y = 0; y < 300; y++) {
     for (int x = 0; x < TFT_WIDTH; x++) {
       yield();
