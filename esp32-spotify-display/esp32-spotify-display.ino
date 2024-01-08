@@ -61,28 +61,33 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   }
 
   auth.accessToken = doc["access_token"].as<String>();
-  auth.refreshToken = doc["refresh_token"].as<String>();
   auth.expiry = millis() + 1000 * doc["expires_in"].as<int>();
+  // Refresh token not included in refresh response
+  String refreshToken = doc["refresh_token"].as<String>();
+  // As if spotify sends back a string that says "null" when using refresh token rather than excluding it
+  if (refreshToken != "null") {
+    auth.refreshToken = refreshToken;
+
+    // Try to write refresh token to file
+    File f = LittleFS.open(TOKEN_PATH, "w");
+    if (!f) {
+      #ifdef DEBUG
+        Serial.println("Failed to write token to file...");
+      #endif
+      return;
+    }
+
+  f.print(auth.refreshToken);
+  f.close();
+  }
+
   accessTokenSet = true;
   #ifdef DEBUG
     Serial.println("Successfully got access tokens!");
   #endif
-
-  // Try to write refresh token to file
-  File f = LittleFS.open(TOKEN_PATH, "w");
-  if (!f) {
-    #ifdef DEBUG
-      Serial.println("Failed to write token to file...");
-    #endif
-    return;
-  }
-
-  f.print(auth.refreshToken);
-  f.close();
 }
 
 bool getAuth(bool refresh, bool fromFile, String code) {
-
   // Attempt to automatically get access token from saved refresh token
   if (refresh && fromFile) {
     File f = LittleFS.open(TOKEN_PATH, "r");
@@ -91,7 +96,6 @@ bool getAuth(bool refresh, bool fromFile, String code) {
       if (auth.refreshToken.length() == 0) {
         refresh = false;
       }
-      Serial.println(auth.refreshToken);
       f.close();
     }
   }
