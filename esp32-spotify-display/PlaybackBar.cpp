@@ -35,11 +35,13 @@ void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force) {
 
     screen.drawFastVLine(prevBound, y-2*height, 4*height, COLOR_RGB565_BLACK);
     screen.drawFastVLine(bound, y-2*height, 4*height, color);
+    screen.drawPixel(prevBound, y, color);
     playing = 0;
 
   // Start playing after pause
   } else if (playStateFlag && !playing) {
     screen.drawFastVLine(prevBound, y-2*height, 4*height, COLOR_RGB565_BLACK);
+    screen.drawPixel(prevBound, y, color);
     screen.drawFastVLine(bound, y-2*height, 4*height, color);
 
     // Animate wave opening to set amplitude

@@ -227,7 +227,7 @@ bool getAlbumArt() {
 
   if (!client.connect(host, port)) {
     #ifdef DEBUG
-      Serial.println("Connection failed!");
+      Serial.println("Connection failed! album");
     #endif
     return false;
   }
@@ -348,10 +348,11 @@ bool updateVolume() {
 uint16_t* albumBmp = NULL;
 
 void drawBmp(int imgX, int imgY, int imgW, int imgH) {
+
+  if (!albumBmp) return;
   // Take average color components of the first few rows of the image
   uint16_t r = 0, g = 0, b = 0, rr = 0, rg = 0, rb = 0;
   for (int i = 0; i < imgW * 5; i++) {
-
     // Ensure average isnt black skewed too heavily
     rr = ((albumBmp[i] >> 11) & 0x1F);
     rg = ((albumBmp[i] >> 5) & 0x3F);
@@ -365,13 +366,13 @@ void drawBmp(int imgX, int imgY, int imgW, int imgH) {
     b = (b * i + rb) / (i + 1);
   }
 
-  Serial.printf("r %uh\n", r);
-  Serial.printf("g %uh\n", g);
-  Serial.printf("b %uh\n", b);
+  #ifdef DEBUG
+    Serial.printf("Gradient start color = r(%u) g(%u) b(%u)\n", r, g, b);
+  #endif
   for (int y = 0; y < 300; y++) {
     for (int x = 0; x < TFT_WIDTH; x++) {
-      yield();
 
+      yield();
       bool overlapX = x >= imgX && x < imgX + imgW;
       bool overlapY = y >= imgY && y < imgY + imgH;
 
@@ -402,8 +403,9 @@ void drawBmp(int imgX, int imgY, int imgW, int imgH) {
   }
 }
 
-// Callback for TJpg draw function
+// Callback for TJpg draw function, redraws scaled jpeg into memory based bitmap for manipulation
 bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+  if (!albumBmp) return false;
   for (int i = 0; i < w * h; i++) {
     albumBmp[y * 150 + (i % w) + x] = bitmap[i];
     if (i % w == w-1) y++;
@@ -431,12 +433,12 @@ void webServerHandleCallback() {
     } else {
       server.send(200, "text/html", "Authentication failed... Please try again :(\r\n");
     }
-
-  } else {
-    #ifdef DEBUG
+  } 
+  #ifdef DEBUG
+    else {
       Serial.println("An error occurred. Server provided no code arg.");
-    #endif
-  }
+    }
+  #endif
 }
 
 // ------------------------------- TEXT -------------------------------
@@ -568,10 +570,13 @@ void loop(){
       lastImgRequest = millis();
       if (getAlbumArt()) {
         // Process and draw background gradient and album art
-        albumBmp = (uint16_t*) malloc(sizeof(uint16_t) * 150 * 150);
-        TJpgDec.drawFsJpg(0, 0, IMG_PATH, LittleFS);
-        drawBmp(IMG_X, IMG_Y, 150, 150);
-        free(albumBmp);
+        albumBmp = (uint16_t*) malloc(sizeof(uint16_t) * 22500);
+        if (albumBmp) {
+          TJpgDec.drawFsJpg(0, 0, IMG_PATH, LittleFS);
+          drawBmp(IMG_X, IMG_Y, 150, 150);
+          free(albumBmp);
+          albumBmp = NULL;
+        }
         imageSet = 1;
       }
     }

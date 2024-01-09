@@ -31,7 +31,7 @@
 #define MAX_AUTH_REFRESH_FAILS 3
 #define IMG_PATH               "/img.jpg"
 #define TOKEN_PATH             "/token.txt"
-#define REQ_TIMEOUT            3000       // ms
+#define REQ_TIMEOUT            5000       // ms
 #define TFT_WIDTH              240
 #define TFT_HEIGHT             320
 #define IMG_Y                  40
