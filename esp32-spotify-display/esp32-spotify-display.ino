@@ -453,10 +453,11 @@ void writeSongText(DFRobot_ST7789_240x320_HW_SPI& screen, uint16_t color) {
 // ------------------------------- MAIN -------------------------------
 
 // Control timers
-uint32_t lastRequest    = 0;
-uint32_t lastPotRead    = 0;
-uint32_t lastPotChange  = 0;
-uint32_t lastImgRequest = 0;
+uint32_t lastRequest      = 0;
+uint32_t lastPotRead      = 0;
+uint32_t lastPotChange    = 0;
+uint32_t lastImgRequest   = 0;
+int      authRefreshFails = 0;
 
 void setup() {
   #ifdef DEBUG
@@ -498,7 +499,7 @@ void loop(){
 
   if (!accessTokenSet && !triedFileToken) {
     if (getAuth(/*refresh=*/true, /*fromFile=*/true, "")) {
-      uint32_t timeout = millis() + 5000;
+      uint32_t timeout = millis() + REQ_TIMEOUT;
       while (!triedFileToken && timeout > millis()) delay(100);
     }
     #ifdef DEBUG
@@ -510,7 +511,10 @@ void loop(){
     triedFileToken = true;
   }
 
+  // Force user to login if auth refresh fails multiple times
+  accessTokenSet = authRefreshFails == MAX_AUTH_REFRESH_FAILS ? false : accessTokenSet;
   if (!accessTokenSet) {
+    authRefreshFails = 0;
     screen.setCursor(0,0);
     screen.setTextSize(2);
     screen.print("Visit \nhttp://" + WiFi.localIP().toString() + "\nto log in :)\n");
@@ -520,10 +524,19 @@ void loop(){
   if (millis() > auth.expiry) {
     getAuth(/*refresh=*/true, /*fromFile=*/false, "");
     accessTokenSet = false;
+    uint32_t timeout = millis() + REQ_TIMEOUT;
     while (!accessTokenSet) {
+      // Attempt authorisation refresh next iteration if timedout
+      if (timeout < millis()) {
+        accessTokenSet = true;
+        authRefreshFails++;
+        return;
+      }
+
       playbackBar.draw(screen, 0);
       delay(50);
     }
+    authRefreshFails = 0;
   }
 
   if (millis() - lastRequest > REQUEST_RATE) {
