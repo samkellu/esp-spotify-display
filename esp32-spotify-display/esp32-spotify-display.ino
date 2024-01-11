@@ -221,11 +221,12 @@ bool getCurrentlyPlaying() {
 
 // Synchronous due to large file size limitations
 bool getAlbumArt() {
-  const char* host  = "i.scdn.co";
-  const String url  = song.imgUrl.substring(17);
-  uint16_t port     = 443;
 
-  if (!client.connect(host, port)) {
+  const char* host = "i.scdn.co";
+  const String url = song.imgUrl.substring(17);
+  uint16_t port    = 443;
+
+  if (!client.connect(host, port, 5000)) {
     #ifdef DEBUG
       Serial.println("Connection failed! album");
     #endif
@@ -345,19 +346,19 @@ bool updateVolume() {
 
 // ------------------------------- TJPG -------------------------------
 
-uint16_t albumBmp[22500];
+uint16_t* albumBmp;
 
 void drawBmp(int imgX, int imgY, int imgW, int imgH) {
   // Take average color components of the first few rows of the image
   uint16_t r = 0, g = 0, b = 0, rr = 0, rg = 0, rb = 0;
-  for (int i = 0; i < imgW * 5; i++) {
+  for (int i = 0; i < imgW * 10; i++) {
     // Ensure average isnt black skewed too heavily
     rr = ((albumBmp[i] >> 11) & 0x1F);
     rg = ((albumBmp[i] >> 5) & 0x3F);
     rb = (albumBmp[i] & 0x1F);
-    rr = rr == 0 ? r : rr;
-    rg = rg == 0 ? g : rg;
-    rb = rb == 0 ? b : rb;
+    rr = rr < 4 ? r : rr;
+    rg = rg < 4 ? g : rg;
+    rb = rb < 4 ? b : rb;
 
     r = (r * i + rr) / (i + 1);
     g = (g * i + rg) / (i + 1);
@@ -463,8 +464,6 @@ void setup() {
     Serial.begin(115200);
   #endif
 
-  client.setInsecure();
-
   // Initialise LittleFS
   if (!LittleFS.begin()) {
     #ifdef DEBUG
@@ -472,6 +471,8 @@ void setup() {
     #endif
     return;
   }
+
+  client.setInsecure();
 
   // Initialise tft display
   screen.begin();
@@ -566,10 +567,20 @@ void loop(){
     if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT) {
       lastImgRequest = millis();
       if (getAlbumArt()) {
-        // Process and draw background gradient and album art
-        TJpgDec.drawFsJpg(0, 0, IMG_PATH, LittleFS);
-        drawBmp(IMG_X, IMG_Y, 150, 150);
-        imageSet = 1;
+        albumBmp = (uint16_t*) malloc(sizeof(uint16_t) * 22500);
+        if (albumBmp) {
+          // Process and draw background gradient and album art
+          TJpgDec.drawFsJpg(0, 0, IMG_PATH, LittleFS);
+          drawBmp(IMG_X, IMG_Y, 150, 150);
+          imageSet = 1;
+          free(albumBmp);
+        
+        } 
+        #ifdef DEBUG
+          else {
+            Serial.println("Failed to allocate memory for image buffer.");
+          }
+        #endif
       }
     }
   }
