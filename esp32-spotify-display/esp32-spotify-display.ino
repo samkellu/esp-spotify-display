@@ -345,11 +345,9 @@ bool updateVolume() {
 
 // ------------------------------- TJPG -------------------------------
 
-uint16_t* albumBmp = NULL;
+uint16_t albumBmp[22500];
 
 void drawBmp(int imgX, int imgY, int imgW, int imgH) {
-
-  if (!albumBmp) return;
   // Take average color components of the first few rows of the image
   uint16_t r = 0, g = 0, b = 0, rr = 0, rg = 0, rb = 0;
   for (int i = 0; i < imgW * 5; i++) {
@@ -405,7 +403,6 @@ void drawBmp(int imgX, int imgY, int imgW, int imgH) {
 
 // Callback for TJpg draw function, redraws scaled jpeg into memory based bitmap for manipulation
 bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-  if (!albumBmp) return false;
   for (int i = 0; i < w * h; i++) {
     albumBmp[y * 150 + (i % w) + x] = bitmap[i];
     if (i % w == w-1) y++;
@@ -570,17 +567,13 @@ void loop(){
       lastImgRequest = millis();
       if (getAlbumArt()) {
         // Process and draw background gradient and album art
-        albumBmp = (uint16_t*) malloc(sizeof(uint16_t) * 22500);
-        if (albumBmp) {
-          TJpgDec.drawFsJpg(0, 0, IMG_PATH, LittleFS);
-          drawBmp(IMG_X, IMG_Y, 150, 150);
-          free(albumBmp);
-          albumBmp = NULL;
-        }
+        TJpgDec.drawFsJpg(0, 0, IMG_PATH, LittleFS);
+        drawBmp(IMG_X, IMG_Y, 150, 150);
         imageSet = 1;
       }
     }
   }
+  
 
   // // Read potentiometer value at fixed interval
   // if (millis() - lastPotRead > POT_READ_RATE) {
