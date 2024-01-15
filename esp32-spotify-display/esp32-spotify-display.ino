@@ -136,7 +136,7 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
   if (request->responseHTTPcode() != 200) return;
 
   String json = request->responseText();
-  DynamicJsonDocument doc(1024);
+  DynamicJsonDocument doc(2048);
   StaticJsonDocument<300> filter;
 
   JsonObject filter_device            = filter.createNestedObject("device");
@@ -377,10 +377,6 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
     #endif
   }
 
-  screen.drawRGBBitmap(x, y, bitmap, w, h);
-  // Animate playback bar when drawing bitmap
-  playbackBar.draw(screen, 0);
-
   bool drawBackfill = x == IMG_X || (y == IMG_Y + IMG_H - h && x == IMG_X + IMG_W - w);
   if (drawBackfill && r + g + b > GRADIENT_BLACK_THRESHOLD) {
     int yStart = y == IMG_Y ? 0 : y;
@@ -411,6 +407,10 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
       playbackBar.draw(screen, 0);
     }
   }
+
+  screen.drawRGBBitmap(x, y, bitmap, w, h);
+  // Animate playback bar when drawing bitmap
+  playbackBar.draw(screen, 0);
 
   return true;
 }
