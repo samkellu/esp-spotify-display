@@ -221,7 +221,6 @@ bool getCurrentlyPlaying() {
 
 // Synchronous due to large file size limitations
 bool getAlbumArt() {
-
   const char* host = "i.scdn.co";
   const String url = song.imgUrl.substring(17);
   uint16_t port    = 443;
@@ -346,68 +345,73 @@ bool updateVolume() {
 
 // ------------------------------- TJPG -------------------------------
 
-uint16_t* albumBmp;
+uint16_t r, g, b;
+bool sampleColor = false;
 
-void drawBmp(int imgX, int imgY, int imgW, int imgH) {
-  // Take average color components of the first few rows of the image
-  uint16_t r = 0, g = 0, b = 0, rr = 0, rg = 0, rb = 0;
-  for (int i = 0; i < imgW * 10; i++) {
-    // Ensure average isnt black skewed too heavily
-    rr = ((albumBmp[i] >> 11) & 0x1F);
-    rg = ((albumBmp[i] >> 5) & 0x3F);
-    rb = (albumBmp[i] & 0x1F);
-    rr = rr < 4 ? r : rr;
-    rg = rg < 4 ? g : rg;
-    rb = rb < 4 ? b : rb;
-
-    r = (r * i + rr) / (i + 1);
-    g = (g * i + rg) / (i + 1);
-    b = (b * i + rb) / (i + 1);
-  }
-
-  #ifdef DEBUG
-    Serial.printf("Gradient start color = r(%u) g(%u) b(%u)\n", r, g, b);
-  #endif
-  for (int y = 0; y < 300; y++) {
-    for (int x = 0; x < TFT_WIDTH; x++) {
-
-      yield();
-      bool overlapX = x >= imgX && x < imgX + imgW;
-      bool overlapY = y >= imgY && y < imgY + imgH;
-
-      if (overlapX && overlapY) {
-        int idx = (y - imgY) * imgW + ((x - imgX) % imgW);
-        screen.drawPixel(x, y, albumBmp[idx]);
-        continue;
-      }
-
-      // Dont draw gradient if its too dark
-      if (r + g + b > 5) {
-        double grad = (300 - y - random(0, 25)) / (double) 300;
-        grad = grad < 0 ? 0 : grad;
-        uint8_t rGrad = r * grad;
-        uint8_t gGrad = g * grad;
-        uint8_t bGrad = b * grad;
-        screen.drawPixel(x, y, (rGrad << 11) | (gGrad << 5) | bGrad);
-      }
-    }
-
-    // Dont overwrite text with background fill
-    if (y > TEXT_Y) {
-      writeSongText(screen, COLOR_RGB565_WHITE);
-    }
-
-    // Animate playback bar
-    playbackBar.draw(screen, 0);
-  }
-}
-
-// Callback for TJpg draw function, redraws scaled jpeg into memory based bitmap for manipulation
+// Callback for TJpg draw function, draws scaled jpeg with gradient backfill
 bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-  for (int i = 0; i < w * h; i++) {
-    albumBmp[y * 150 + (i % w) + x] = bitmap[i];
-    if (i % w == w-1) y++;
+  // Take average color components of the first block of the image
+  if (sampleColor) {
+    sampleColor = false;
+    r = 0;
+    g = 0;
+    b = 0;
+    uint16_t rr = 0, rg = 0, rb = 0;
+    for (int i = 0; i < w * h; i++) {
+      // Ensure average isnt black skewed too heavily
+      rr = ((bitmap[i] >> 11) & 0x1F);
+      rg = ((bitmap[i] >> 5) & 0x3F);
+      rb = (bitmap[i] & 0x1F);
+      if (rr + rg + rb < GRADIENT_BLACK_THRESHOLD) {
+        rr = r;
+        rg = g;
+        rb = b;
+      }
+
+      r = (r * i + rr) / (i + 1);
+      g = (g * i + rg) / (i + 1);
+      b = (b * i + rb) / (i + 1);
+    }
+    #ifdef DEBUG
+      Serial.printf("Gradient start color = r(%u) g(%u) b(%u)\n", r, g, b);
+    #endif
   }
+
+  screen.drawRGBBitmap(x, y, bitmap, w, h);
+  // Animate playback bar when drawing bitmap
+  playbackBar.draw(screen, 0);
+
+  bool drawBackfill = x == IMG_X || (y == IMG_Y + IMG_H - h && x == IMG_X + IMG_W - w);
+  if (drawBackfill && r + g + b > GRADIENT_BLACK_THRESHOLD) {
+    int yStart = y == IMG_Y ? 0 : y;
+    int yEnd = y == IMG_Y + IMG_H - h && x == IMG_X + IMG_W - w ? 300 : y + h;
+    for (int gy = yStart; gy < yEnd; gy++) {
+      for (int gx = 0; gx < TFT_WIDTH; gx++) {
+        yield();
+        bool overlapX = gx >= IMG_X && gx < IMG_X + IMG_W;
+        bool overlapY = gy >= IMG_Y && gy < IMG_Y + IMG_H;
+
+        // Dont draw gradient if its too dark
+        if (!(overlapX && overlapY)) {
+          double grad = (300 - gy - random(0, 25)) / (double) 300;
+          grad = grad < 0 ? 0 : grad;
+          uint8_t rGrad = r * grad;
+          uint8_t gGrad = g * grad;
+          uint8_t bGrad = b * grad;
+          screen.drawPixel(gx, gy, (rGrad << 11) | (gGrad << 5) | bGrad);
+        }
+      }
+      
+      // Dont overwrite text with background fill
+      if (gy > TEXT_Y) {
+        writeSongText(screen, COLOR_RGB565_WHITE);
+      }
+
+      // Animate playback bar when drawing each line of backfill
+      playbackBar.draw(screen, 0);
+    }
+  }
+
   return true;
 }
 
@@ -567,20 +571,10 @@ void loop(){
     if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT) {
       lastImgRequest = millis();
       if (getAlbumArt()) {
-        albumBmp = (uint16_t*) malloc(sizeof(uint16_t) * 22500);
-        if (albumBmp) {
-          // Process and draw background gradient and album art
-          TJpgDec.drawFsJpg(0, 0, IMG_PATH, LittleFS);
-          drawBmp(IMG_X, IMG_Y, 150, 150);
-          imageSet = 1;
-          free(albumBmp);
-        
-        } 
-        #ifdef DEBUG
-          else {
-            Serial.println("Failed to allocate memory for image buffer.");
-          }
-        #endif
+        // Process and draw background gradient and album art
+        sampleColor = true;
+        TJpgDec.drawFsJpg(IMG_X, IMG_Y, IMG_PATH, LittleFS);
+        imageSet = true;
       }
     }
   }
