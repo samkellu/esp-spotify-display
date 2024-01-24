@@ -5,11 +5,8 @@ PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, 50);
 WebServer server(80);
 WiFiClientSecure client;
 
-// TODO - when have access to hardware again, move to respective functions
-//        or see if can use just one
 AsyncHTTPSRequest httpsAuth;
 AsyncHTTPSRequest httpsCurrent;
-AsyncHTTPSRequest httpsImg;
 AsyncHTTPSRequest httpsVolume;
 SongInfo song;
 AuthInfo auth;
@@ -32,7 +29,7 @@ void connect(const char* ssid, const char* passphrase) {
 
   // Wait for connection
   WiFi.begin(ssid, passphrase);
-  while ((WiFi.status() != WL_CONNECTED)) delay(200);
+  while ((WiFi.status() != WL_CONNECTED)) yield();
 
   #ifdef DEBUG
     Serial.print("Successfully connected to ");
@@ -167,14 +164,14 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
   }
 
   String prevId     = song.id;
+  song.progressMs   = doc["progress_ms"].as<int>();
   JsonObject device = doc["device"];
   JsonObject item   = doc["item"];
   JsonArray images  = item["album"]["images"];
-  song.progressMs   = doc["progress_ms"].as<int>();
+  song.id           = item["id"].as<String>();
   song.isPlaying    = doc["is_playing"].as<bool>();
   song.volume       = device["volume_percent"].as<int>();
   song.deviceName   = device["name"].as<String>();
-  song.id           = item["id"].as<String>();
   song.songName     = item["name"].as<String>();
   song.albumName    = item["album"]["name"].as<String>();
   song.artistName   = item["artists"][0]["name"].as<String>();
@@ -185,7 +182,7 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
     int width  = images[i]["width"].as<int>();
 
     // Only grab appropriate sized image
-    if (height <= 300 && width <= 300) {
+    if (height <= IMG_H * IMG_SCALE && width <= IMG_W * IMG_SCALE) {
       song.height = height;
       song.width  = width;
       song.imgUrl = images[i]["url"].as<String>();
@@ -249,8 +246,9 @@ bool getAlbumArt() {
 
   if (strcmp(status.c_str(), "200") != 0) {
     #ifdef DEBUG
-      Serial.println("An error occurred: HTTP " + status);
+      Serial.println("An error occurred while getting image: HTTP " + status);
       Serial.println(url);
+      Serial.println(song.imgUrl);
     #endif
     client.stop();
     return false;
@@ -494,7 +492,7 @@ void setup() {
 
   // Setup TJpg settings
   TJpgDec.setCallback(processBmp);
-  TJpgDec.setJpgScale(2);
+  TJpgDec.setJpgScale(IMG_SCALE);
 }
 
 void loop(){
@@ -504,7 +502,7 @@ void loop(){
   if (!accessTokenSet && !triedFileToken) {
     if (getAuth(/*refresh=*/true, /*fromFile=*/true, "")) {
       uint32_t timeout = millis() + REQ_TIMEOUT;
-      while (!triedFileToken && timeout > millis()) delay(100);
+      while (!triedFileToken && timeout > millis()) yield();
     }
     #ifdef DEBUG
       else {
@@ -538,7 +536,7 @@ void loop(){
       }
 
       playbackBar.draw(screen, 0);
-      delay(50);
+      yield();
     }
     authRefreshFails = 0;
   }
@@ -549,7 +547,7 @@ void loop(){
     yield();
   }
 
-  if (readFlag) {
+  if (song.id && readFlag) {
     readFlag = false;
     if (newSong) {
       // Clear album art and song/artist text
@@ -559,8 +557,8 @@ void loop(){
       // Force draw the playback bar closing animation
       playbackBar.draw(screen, true);
       writeSongText(screen, COLOR_RGB565_WHITE);
-      newSong  = 0;
-      imageSet = 0;
+      newSong  = false;
+      imageSet = false;
     }
 
     playbackBar.duration = song.durationMs;
@@ -606,5 +604,5 @@ void loop(){
     playbackBar.amplitudePercent = min(max(0, playbackBar.amplitudePercent), 100);
   }
 
-  playbackBar.draw(screen, 0);
+  playbackBar.draw(screen, false);
 }

@@ -36,6 +36,7 @@
 #define TFT_HEIGHT               320
 #define IMG_Y                    40
 #define IMG_X                    45
+#define IMG_SCALE                2
 #define IMG_W                    150
 #define IMG_H                    150
 #define TEXT_Y                   240
