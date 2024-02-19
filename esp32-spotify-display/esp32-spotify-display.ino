@@ -27,14 +27,10 @@ void connect(const char* ssid, const char* passphrase) {
     Serial.printf("Attempting connection to %s\n", ssid);
   #endif
 
-  while (WiFi.status() != WL_CONNECTED) {
-    uint16_t sw = millis();
-    // Wait for connection
-    WiFi.disconnect();
-    WiFi.begin(ssid, passphrase);
-    while (WiFi.status() != WL_CONNECTED && sw + WIFI_CONN_TIMEOUT > millis()) yield();
-  }
-
+  // Wait for connection
+  WiFi.begin(ssid, passphrase);
+  while (WiFi.status() != WL_CONNECTED) delay(100);
+  
   #ifdef DEBUG
     Serial.print("Successfully connected to ");
     Serial.println(ssid);
@@ -501,10 +497,7 @@ void setup() {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
-    screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
-    screen.setTextSize(2);
-    screen.print("Reconnecting...\n");
-    connect(SSID, PASSPHRASE);    
+    WiFi.reconnect();
   }
 
   server.handleClient();
