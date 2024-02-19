@@ -27,9 +27,13 @@ void connect(const char* ssid, const char* passphrase) {
     Serial.printf("Attempting connection to %s\n", ssid);
   #endif
 
-  // Wait for connection
-  WiFi.begin(ssid, passphrase);
-  while ((WiFi.status() != WL_CONNECTED)) yield();
+  while (WiFi.status() != WL_CONNECTED) {
+    uint16_t sw = millis();
+    // Wait for connection
+    WiFi.disconnect();
+    WiFi.begin(ssid, passphrase);
+    while (WiFi.status() != WL_CONNECTED && sw + WIFI_CONN_TIMEOUT > millis()) yield();
+  }
 
   #ifdef DEBUG
     Serial.print("Successfully connected to ");
@@ -495,7 +499,14 @@ void setup() {
   TJpgDec.setJpgScale(IMG_SCALE);
 }
 
-void loop(){
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
+    screen.setTextSize(2);
+    screen.print("Reconnecting...\n");
+    connect(SSID, PASSPHRASE);    
+  }
+
   server.handleClient();
   yield();
 
@@ -517,12 +528,14 @@ void loop(){
   accessTokenSet = authRefreshFails == MAX_AUTH_REFRESH_FAILS ? false : accessTokenSet;
   if (!accessTokenSet) {
     authRefreshFails = 0;
+    screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
     screen.setCursor(0,0);
     screen.setTextSize(2);
     screen.print("Visit \nhttp://" + WiFi.localIP().toString() + "\nto log in :)\n");
     return;
   }
 
+  // Auto refresh auth token when it expires
   if (millis() > auth.expiry) {
     getAuth(/*refresh=*/true, /*fromFile=*/false, "");
     accessTokenSet = false;
@@ -538,6 +551,7 @@ void loop(){
       playbackBar.draw(screen, 0);
       yield();
     }
+    accessTokenSet = true;
     authRefreshFails = 0;
   }
 
@@ -547,7 +561,7 @@ void loop(){
     yield();
   }
 
-  if (song.id && readFlag) {
+  if (readFlag) {
     readFlag = false;
     if (newSong) {
       // Clear album art and song/artist text
@@ -576,7 +590,6 @@ void loop(){
       }
     }
   }
-  
 
   // // Read potentiometer value at fixed interval
   // if (millis() - lastPotRead > POT_READ_RATE) {
