@@ -17,7 +17,15 @@ void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force) {
 
   int interpolatedTime = (int) (millis() - lastUpdate + lastProgress);
   progress = min(interpolatedTime, duration);
-  int curAmplitude = amplitude * (amplitudePercent / (float) 100);
+
+  // Slowly change amplitude of playback bar wave
+  if (amplitudePercent != targetAmplitudePercent) {
+    int inc = abs(amplitudePercent - targetAmplitudePercent) > AMPLITUDE_D ? AMPLITUDE_D : 1;
+    inc *= amplitudePercent > targetAmplitudePercent ? -1 : 1; 
+    amplitudePercent += inc;
+  }
+
+  int curAmplitudePercent = amplitude * (amplitudePercent / (float) 100);
   int bound = x + width * (progress / (float) duration);
   uint32_t prevTime = curTime;
   curTime++;
@@ -25,9 +33,9 @@ void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force) {
   // Stop playing
   if (!playStateFlag && playing) {
     // Close wave incrementally to zero amplitude
-    for (int i = prevAmplitude; i > 0; i--) {
+    for (int i = prevAmplitudePercent; i > 0; i--) {
       for (int j = x; j < prevBound; j++) {
-       screen.drawPixel(j, y + i * sin(period * (prevTime + j)), COLOR_RGB565_BLACK);
+        screen.drawPixel(j, y + i * sin(period * (prevTime + j)), COLOR_RGB565_BLACK);
         screen.drawPixel(j, y + (i - 1) * sin(period * (prevTime + j)), color);
       }
       delay(100);
@@ -45,7 +53,7 @@ void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force) {
     screen.drawFastVLine(bound, y-2*height, 4*height, color);
 
     // Animate wave opening to set amplitude
-    for (int i = 1; i <= curAmplitude; i++) {
+    for (int i = 1; i <= curAmplitudePercent; i++) {
       for (int j = x; j < bound; j++) {
         screen.drawPixel(j, y + (i - 1) * sin(period * (curTime + j)), COLOR_RGB565_BLACK);
         screen.drawPixel(j, y + i * sin(period * (curTime + j)), color);
@@ -57,14 +65,14 @@ void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force) {
     prevBound = bound;
     return;
 
+  // Draw animated wave
   } else {
-    // Draw animated wave
     for (int i = x; i < bound; i++) {
-      screen.drawPixel(i, y + prevAmplitude * sin(period * (prevTime + i)), COLOR_RGB565_BLACK);
-      screen.drawPixel(i, y + curAmplitude * sin(period * (curTime + i)), color);
+      screen.drawPixel(i, y + prevAmplitudePercent * sin(period * (prevTime + i)), COLOR_RGB565_BLACK);
+      screen.drawPixel(i, y + curAmplitudePercent * sin(period * (curTime + i)), color);
     }
 
-    prevAmplitude = curAmplitude;
+    prevAmplitudePercent = curAmplitudePercent;
   }
 
   // Clear pixels between previous progress bar and current
@@ -80,6 +88,14 @@ void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force) {
 
 void PlaybackBar::setPlayState(bool state) {
   playStateFlag = state;
+}
+
+void PlaybackBar::setAmplitudePercent(int amp) {
+  amplitudePercent = amp;
+}
+
+void PlaybackBar::setTargetAmplitude(int amp) {
+  targetAmplitudePercent = amp;
 }
 
 void PlaybackBar::updateProgress(int val) {

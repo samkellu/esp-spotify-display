@@ -44,7 +44,7 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   if (readyState != readyStateDone) return;
   if (request->responseHTTPcode() != 200) return;
 
-  DynamicJsonDocument doc(1024);
+  StaticJsonDocument<1024> doc;
   String json = request->responseText();
   DeserializationError err = deserializeJson(doc, json);
 
@@ -190,6 +190,11 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
     }
   }
 
+  Serial.println(doc.capacity());
+  Serial.println(doc.overflowed());
+  doc.garbageCollect();
+  Serial.printf("\nStack:%d,Heap:%lu\n", uxTaskGetStackHighWaterMark(NULL), (unsigned long)ESP.getFreeHeap());
+
   readFlag = true;
   newSong = song.id != prevId; 
 }
@@ -283,7 +288,6 @@ bool getAlbumArt() {
   while (offset < numBytes) {
 
     size_t available = client.available();
-
     if (available) {
       int bytes = client.readBytes(buf, min(available, sizeof(buf)));
       f.write(buf, bytes);
@@ -541,9 +545,10 @@ void loop() {
         return;
       }
 
-      playbackBar.draw(screen, 0);
+      playbackBar.draw(screen, false);
       yield();
     }
+
     accessTokenSet = true;
     authRefreshFails = 0;
   }
@@ -563,11 +568,13 @@ void loop() {
       playbackBar.setPlayState(false);
       // Force draw the playback bar closing animation
       playbackBar.draw(screen, true);
+      playbackBar.setAmplitudePercent(song.volume);
       writeSongText(screen, COLOR_RGB565_WHITE);
       newSong  = false;
       imageSet = false;
     }
 
+    playbackBar.setTargetAmplitude(song.volume);
     playbackBar.duration = song.durationMs;
     playbackBar.updateProgress(song.progressMs);
     playbackBar.setPlayState(song.isPlaying);
@@ -604,11 +611,7 @@ void loop() {
   // }
 
   // Slowly change amplitude of playback bar wave
-  if (playbackBar.amplitudePercent != song.volume) {
-    int inc = playbackBar.amplitudePercent > song.volume ? -6 : 6; 
-    playbackBar.amplitudePercent += inc;
-    playbackBar.amplitudePercent = min(max(0, playbackBar.amplitudePercent), 100);
-  }
+
 
   playbackBar.draw(screen, false);
 }
