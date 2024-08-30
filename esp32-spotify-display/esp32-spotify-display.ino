@@ -99,7 +99,6 @@ bool getAuth(bool refresh, bool fromFile, String code) {
 
   // Fail if client is busy
   if (httpsAuth.readyState() != readyStateUnsent && httpsAuth.readyState() != readyStateDone) return false;
-
   if (httpsAuth.open("POST", "https://accounts.spotify.com/api/token")) {
     String body;
     if (refresh) {
@@ -113,7 +112,6 @@ bool getAuth(bool refresh, bool fromFile, String code) {
     String authStr = "Basic " + base64::encode(String(CLIENT) + ":" + String(CLIENT_SECRET));
     httpsAuth.setReqHeader("Content-Type", "application/x-www-form-urlencoded");
     httpsAuth.setReqHeader("Authorization", authStr.c_str());
-    httpsAuth.onReadyStateChange(authCB);
     httpsAuth.send(body);
     return true;
 
@@ -190,11 +188,6 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
     }
   }
 
-  Serial.println(doc.capacity());
-  Serial.println(doc.overflowed());
-  doc.garbageCollect();
-  Serial.printf("\nStack:%d,Heap:%lu\n", uxTaskGetStackHighWaterMark(NULL), (unsigned long)ESP.getFreeHeap());
-
   readFlag = true;
   newSong = song.id != prevId; 
 }
@@ -207,7 +200,6 @@ bool getCurrentlyPlaying() {
     String authStr = "Bearer " + auth.accessToken;
     httpsCurrent.setReqHeader("Cache-Control", "no-cache");
     httpsCurrent.setReqHeader("Authorization", authStr.c_str());
-    httpsCurrent.onReadyStateChange(currentlyPlayingCB);
     httpsCurrent.send();
     return true;
 
@@ -229,8 +221,9 @@ bool getAlbumArt() {
 
   if (!client.connect(host, port, 5000)) {
     #ifdef DEBUG
-      Serial.println("Connection failed! album");
+      Serial.printf("Connection failed! %c\n", host);
     #endif
+    client.stop();
     return false;
   }
 
@@ -241,6 +234,7 @@ bool getAlbumArt() {
     #ifdef DEBUG
       Serial.println("Failed to send request...");
     #endif
+    client.stop();
     return false;
   }
 
@@ -251,7 +245,7 @@ bool getAlbumArt() {
 
   if (strcmp(status.c_str(), "200") != 0) {
     #ifdef DEBUG
-      Serial.println("An error occurred while getting image: HTTP " + status);
+      Serial.printf("An error occurred while getting image: HTTP %s\n", status.c_str());
       Serial.println(url);
       Serial.println(song.imgUrl);
     #endif
@@ -263,6 +257,7 @@ bool getAlbumArt() {
     #ifdef DEBUG
       Serial.println("Response had not content-length header.");
     #endif
+    client.stop();
     return false;
   }
 
@@ -280,6 +275,7 @@ bool getAlbumArt() {
     #ifdef DEBUG
       Serial.println("Failed to write image to file...");
     #endif
+    client.stop();
     return false;
   }
 
@@ -385,7 +381,6 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
     int yEnd = y == IMG_Y + IMG_H - h && x == IMG_X + IMG_W - w ? 300 : y + h;
     for (int gy = yStart; gy < yEnd; gy++) {
       for (int gx = 0; gx < TFT_WIDTH; gx++) {
-        yield();
         bool overlapX = gx >= IMG_X && gx < IMG_X + IMG_W;
         bool overlapY = gy >= IMG_Y && gy < IMG_Y + IMG_H;
 
@@ -399,14 +394,15 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
           screen.drawPixel(gx, gy, (rGrad << 11) | (gGrad << 5) | bGrad);
         }
       }
+
+      // Animate playback bar when drawing backfill
+      playbackBar.draw(screen, 0);
+      yield();
       
       // Dont overwrite text with background fill
       if (gy > TEXT_Y) {
         writeSongText(screen, COLOR_RGB565_WHITE);
       }
-
-      // Animate playback bar when drawing each line of backfill
-      playbackBar.draw(screen, 0);
     }
   }
 
@@ -497,6 +493,10 @@ void setup() {
   // Setup TJpg settings
   TJpgDec.setCallback(processBmp);
   TJpgDec.setJpgScale(IMG_SCALE);
+
+  httpsAuth.onReadyStateChange(authCB);
+  httpsCurrent.onReadyStateChange(currentlyPlayingCB);
+  httpsVolume.onReadyStateChange(volumeSetCB);
 }
 
 void loop() {
@@ -521,26 +521,14 @@ void loop() {
     triedFileToken = true;
   }
 
-  // Force user to login if auth refresh fails multiple times
-  accessTokenSet = authRefreshFails == MAX_AUTH_REFRESH_FAILS ? false : accessTokenSet;
-  if (!accessTokenSet) {
-    authRefreshFails = 0;
-    screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
-    screen.setCursor(0,0);
-    screen.setTextSize(2);
-    screen.print("Visit \nhttp://" + WiFi.localIP().toString() + "\nto log in :)\n");
-    return;
-  }
-
   // Auto refresh auth token when it expires
-  if (millis() > auth.expiry) {
+  if (millis() > auth.expiry && authRefreshFails < MAX_AUTH_REFRESH_FAILS) {
     getAuth(/*refresh=*/true, /*fromFile=*/false, "");
     accessTokenSet = false;
     uint32_t timeout = millis() + REQ_TIMEOUT;
-    while (!accessTokenSet) {
+    while (!accessTokenSet) {    
       // Attempt authorisation refresh next iteration if timedout
       if (timeout < millis()) {
-        accessTokenSet = true;
         authRefreshFails++;
         return;
       }
@@ -553,7 +541,19 @@ void loop() {
     authRefreshFails = 0;
   }
 
+  // Force user to login if auth refresh fails multiple times
+  if (!accessTokenSet) {
+    authRefreshFails = 0;
+    screen.setCursor(0,0);
+    screen.setTextSize(2);
+    screen.print("Visit \nhttp://" + WiFi.localIP().toString() + "\nto log in :)\n");
+    return;
+  }
+
   if (millis() - lastRequest > REQUEST_RATE) {
+    #ifdef DEBUG
+      Serial.printf("\nStack:%d,Heap:%lu\n", uxTaskGetStackHighWaterMark(NULL), (unsigned long) ESP.getFreeHeap());
+    #endif
     lastRequest = millis();
     getCurrentlyPlaying();
     yield();
@@ -568,7 +568,6 @@ void loop() {
       playbackBar.setPlayState(false);
       // Force draw the playback bar closing animation
       playbackBar.draw(screen, true);
-      playbackBar.setAmplitudePercent(song.volume);
       writeSongText(screen, COLOR_RGB565_WHITE);
       newSong  = false;
       imageSet = false;
