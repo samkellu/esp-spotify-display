@@ -3,7 +3,6 @@
 DFRobot_ST7789_240x320_HW_SPI screen(TFT_DC, TFT_CS, TFT_RST);
 PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, 50);
 WebServer server(80);
-WiFiClientSecure client;
 
 AsyncHTTPSRequest httpsAuth;
 AsyncHTTPSRequest httpsCurrent;
@@ -131,7 +130,7 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
   if (request->responseHTTPcode() != 200) return;
 
   String json = request->responseText();
-  DynamicJsonDocument doc(2048);
+  DynamicJsonDocument doc(1024);
   StaticJsonDocument<300> filter;
 
   JsonObject filter_device            = filter.createNestedObject("device");
@@ -161,12 +160,14 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
     return;
   }
 
-  String prevId     = song.id;
-  song.progressMs   = doc["progress_ms"].as<int>();
-  JsonObject device = doc["device"];
   JsonObject item   = doc["item"];
+  if (item["id"] == NULL) return;
+
+  String prevId     = song.id;
+  JsonObject device = doc["device"];
   JsonArray images  = item["album"]["images"];
   song.id           = item["id"].as<String>();
+  song.progressMs   = doc["progress_ms"].as<int>();
   song.isPlaying    = doc["is_playing"].as<bool>();
   song.volume       = device["volume_percent"].as<int>();
   song.deviceName   = device["name"].as<String>();
@@ -219,6 +220,9 @@ bool getAlbumArt() {
   const String url = song.imgUrl.substring(17);
   uint16_t port    = 443;
 
+  WiFiClientSecure client;
+  client.setInsecure();
+
   if (!client.connect(host, port, 5000)) {
     #ifdef DEBUG
       Serial.printf("Connection failed! %c\n", host);
@@ -245,8 +249,8 @@ bool getAlbumArt() {
 
   if (strcmp(status.c_str(), "200") != 0) {
     #ifdef DEBUG
-      Serial.printf("An error occurred while getting image: HTTP %s\n", status.c_str());
-      Serial.println(url);
+      Serial.print("An error occurred while getting image: HTTP");
+      Serial.println(status);
       Serial.println(song.imgUrl);
     #endif
     client.stop();
@@ -473,8 +477,6 @@ void setup() {
     #endif
     return;
   }
-
-  client.setInsecure();
 
   // Initialise tft display
   screen.begin();

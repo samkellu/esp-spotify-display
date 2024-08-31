@@ -15,6 +15,8 @@
 #elif defined(ESP32)
   #define _ASYNC_TCP_SSL_LOGLEVEL_    1
   #define _ASYNC_HTTPS_LOGLEVEL_      1
+  #define DEBUG_ESP_SSL               1
+  #define DEBUG_ESP_PORT Serial
   #include <AsyncHTTPSRequest_Generic.h>
   #include <WiFi.h>
   #include <WiFiClientSecure.h>
@@ -43,7 +45,7 @@
 #define TEXT_X                   0
 #define GRADIENT_BLACK_THRESHOLD 5
 
-#define DEBUG                    1
+#define DEBUG
 
 struct SongInfo {
   // General song info
