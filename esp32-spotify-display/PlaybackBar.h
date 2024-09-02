@@ -7,7 +7,6 @@
 class PlaybackBar {
   private:
     bool playing = 1;
-    bool playStateFlag = 0;
     uint16_t color = COLOR_RGB565_WHITE;
     int x, y;
     int width, height;

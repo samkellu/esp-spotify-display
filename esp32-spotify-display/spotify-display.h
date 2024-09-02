@@ -19,31 +19,32 @@
   #define DEBUG_ESP_PORT Serial
   #include <AsyncHTTPSRequest_Generic.h>
   #include <WiFi.h>
-  #include <WiFiClientSecure.h>
+  #include <HTTPClient.h>
   #include <WebServer.h>
 #endif
 
-#define POT                      A0
-#define POT_READ_RATE            400        // ms
-#define POT_WAIT                 3000       // ms
-#define TFT_CS                   15         // D6
-#define TFT_RST                  2          // D5
-#define TFT_DC                   4          // D4
-#define REQUEST_RATE             7000       // ms
-#define MAX_AUTH_REFRESH_FAILS   3
-#define IMG_PATH                 "/img.jpg"
-#define TOKEN_PATH               "/token.txt"
-#define REQ_TIMEOUT              5000       // ms
-#define TFT_WIDTH                240
-#define TFT_HEIGHT               320
-#define IMG_Y                    40
-#define IMG_X                    45
-#define IMG_SCALE                2
-#define IMG_W                    150
-#define IMG_H                    150
-#define TEXT_Y                   240
-#define TEXT_X                   0
-#define GRADIENT_BLACK_THRESHOLD 5
+#define POT                       A0
+#define POT_READ_RATE             400        // ms
+#define POT_WAIT                  3000       // ms
+#define TFT_CS                    15         // D6
+#define TFT_RST                   2          // D5
+#define TFT_DC                    4          // D4
+#define REQUEST_RATE              7000       // ms
+#define MAX_AUTH_REFRESH_FAILS    3
+#define IMG_PATH                  "/img.jpg"
+#define STREAM_BUF_SIZE           128
+#define TOKEN_PATH                "/token.txt"
+#define REQ_TIMEOUT               5000       // ms
+#define TFT_WIDTH                 240
+#define TFT_HEIGHT                320
+#define IMG_Y                     40
+#define IMG_X                     45
+#define IMG_SCALE                 2
+#define IMG_W                     150
+#define IMG_H                     150
+#define TEXT_Y                    240
+#define TEXT_X                    0
+#define GRADIENT_BLACK_THRESHOLD  5
 
 #define DEBUG
 

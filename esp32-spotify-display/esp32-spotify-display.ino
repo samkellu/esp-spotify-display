@@ -152,11 +152,16 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
   filter_item_album_images["height"]  = true;
 
   DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
+  #ifdef DEBUG
+    Serial.printf("Deserialization rept: Overrun %d, Capacity %zu\n", doc.overflowed(), doc.capacity());
+  #endif
+
   if (err) {
     #ifdef DEBUG
       Serial.print(F("Deserialisation failed"));
       Serial.println(err.f_str());
     #endif
+    request->abort();
     return;
   }
 
@@ -216,80 +221,45 @@ bool getCurrentlyPlaying() {
 
 // Synchronous due to large file size limitations
 bool getAlbumArt() {
-  const char* host = "i.scdn.co";
-  const String url = song.imgUrl.substring(17);
-  uint16_t port    = 443;
 
-  WiFiClientSecure client;
-  client.setInsecure();
-
-  if (!client.connect(host, port, 5000)) {
+  if (!song.imgUrl) {
     #ifdef DEBUG
-      Serial.printf("Connection failed! %c\n", host);
+      Serial.println("No image url available.");
     #endif
-    client.stop();
     return false;
   }
 
-  String req = "GET " + url + " HTTP/1.0\r\nHost: " +
-                host + "\r\nCache-Control: no-cache\r\n";
+  HTTPClient client;
+  client.begin(song.imgUrl);
+  client.setTimeout(REQ_TIMEOUT);
+  client.addHeader("Cache-Control", "no-cache");
 
-  if (client.println(req) == 0) {
+  int resp = client.GET();
+  if (resp != 200) {
     #ifdef DEBUG
-      Serial.println("Failed to send request...");
+      Serial.printf("An error occurred while getting image %c\nHTTP %d\n", song.imgUrl, resp);
     #endif
-    client.stop();
+    client.end();
     return false;
   }
 
-  String ln     = client.readStringUntil('\r');
-  int start     = ln.indexOf(' ') + 1;
-  int end       = ln.indexOf(' ', start);
-  String status = ln.substring(start, end);
-
-  if (strcmp(status.c_str(), "200") != 0) {
-    #ifdef DEBUG
-      Serial.print("An error occurred while getting image: HTTP");
-      Serial.println(status);
-      Serial.println(song.imgUrl);
-    #endif
-    client.stop();
-    return false;
-  }
-
-  if (!client.find("Content-Length:")) {
-    #ifdef DEBUG
-      Serial.println("Response had not content-length header.");
-    #endif
-    client.stop();
-    return false;
-  }
-
-  int numBytes = client.parseInt();
-  if (!client.find("\r\n\r\n")) {
-    #ifdef DEBUG
-      Serial.println("Invalid response from server.");
-    #endif
-    client.stop();
-    return false;
-  }
-
-  File f = LittleFS.open(IMG_PATH, "w+");
+  File f = LittleFS.open(IMG_PATH, "w");
   if (!f) {
     #ifdef DEBUG
-      Serial.println("Failed to write image to file...");
+      Serial.println("Failed to open file descriptor.");
     #endif
-    client.stop();
+    client.end();
     return false;
   }
 
+  int numBytes = client.getSize();
   int offset = 0;
-  uint8_t buf[128];
+  uint8_t buf[STREAM_BUF_SIZE];
+  Stream* data = client.getStreamPtr();
   while (offset < numBytes) {
-
-    size_t available = client.available();
+    int available = data->available();
     if (available) {
-      int bytes = client.readBytes(buf, min(available, sizeof(buf)));
+      int bytes = data->readBytes(buf, min(available, STREAM_BUF_SIZE));
       f.write(buf, bytes);
       offset += bytes;
     }
@@ -299,10 +269,10 @@ bool getAlbumArt() {
   }
 
   f.close();
+  client.end();
   #ifdef DEBUG
     Serial.printf("Wrote to file %d/%d bytes\n", offset, numBytes);
   #endif
-  client.stop();
   return true;
 }
 
@@ -347,6 +317,14 @@ bool updateVolume() {
 
 // ------------------------------- TJPG -------------------------------
 
+static unsigned int rSeed = 43;
+
+// Big primes and overflows should be good enough
+int fast_rand() {
+  rSeed = 396437 * rSeed + 45955009;
+  return (rSeed >> 16) & 0x7FFF;
+}
+
 uint16_t r, g, b;
 bool sampleColor = false;
 
@@ -379,6 +357,7 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
     #endif
   }
 
+  // Dont draw gradient if its too dark or covered by the image
   bool drawBackfill = x == IMG_X || (y == IMG_Y + IMG_H - h && x == IMG_X + IMG_W - w);
   if (drawBackfill && r + g + b > GRADIENT_BLACK_THRESHOLD) {
     int yStart = y == IMG_Y ? 0 : y;
@@ -388,9 +367,8 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
         bool overlapX = gx >= IMG_X && gx < IMG_X + IMG_W;
         bool overlapY = gy >= IMG_Y && gy < IMG_Y + IMG_H;
 
-        // Dont draw gradient if its too dark
         if (!(overlapX && overlapY)) {
-          double grad = (300 - gy - random(0, 25)) / (double) 300;
+          double grad = (300 - gy - (fast_rand() % 25)) / (double) 300;
           grad = grad < 0 ? 0 : grad;
           uint8_t rGrad = r * grad;
           uint8_t gGrad = g * grad;
@@ -401,7 +379,6 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
 
       // Animate playback bar when drawing backfill
       playbackBar.draw(screen, 0);
-      yield();
       
       // Dont overwrite text with background fill
       if (gy > TEXT_Y) {
@@ -410,10 +387,10 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
     }
   }
 
-  screen.drawRGBBitmap(x, y, bitmap, w, h);
   // Animate playback bar when drawing bitmap
   playbackBar.draw(screen, 0);
-
+  screen.drawRGBBitmap(x, y, bitmap, w, h);
+  yield();
   return true;
 }
 
@@ -503,7 +480,13 @@ void setup() {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
-    WiFi.reconnect();
+    #ifdef DEBUG
+      Serial.println("WiFi reconnecting.");
+    #endif
+
+    // reconnect causing DHCP issues, disconnect -> begin seems to work
+    WiFi.disconnect();
+    connect(SSID, PASSPHRASE);
   }
 
   server.handleClient();
