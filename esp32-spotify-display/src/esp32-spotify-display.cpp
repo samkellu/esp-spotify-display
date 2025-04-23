@@ -7,6 +7,7 @@ WebServer server(80);
 AsyncHTTPSRequest httpsAuth;
 AsyncHTTPSRequest httpsCurrent;
 AsyncHTTPSRequest httpsVolume;
+HTTPClient client;
 
 SongInfo song;
 AuthInfo auth;
@@ -22,7 +23,8 @@ bool textSet        = false;
 bool imageDrawFlag  = false;
 
 // Connects to the network specified in credentials.h
-void connect(const char* ssid, const char* passphrase) {
+void connect(const char* ssid, const char* passphrase)
+{
   #ifdef DEBUG
     Serial.printf("Attempting connection to %s\n", ssid);
   #endif
@@ -40,7 +42,8 @@ void connect(const char* ssid, const char* passphrase) {
 
 // ------------------------------- GET/REFRESH ACCESS TOKENS -------------------------------
 
-void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
+void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState)
+{
   // Fail if client isnt finished reading or response failed
   if (readyState != readyStateDone) return;
   if (request->responseHTTPcode() != 200) return;
@@ -49,7 +52,8 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   String json = request->responseText();
   DeserializationError err = deserializeJson(doc, json);
 
-  if (err) {
+  if (err)
+  {
     #ifdef DEBUG
       Serial.print("Deserialisation failed for string: ");
       Serial.println(json);
@@ -63,12 +67,14 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   // Refresh token not included in refresh response
   String refreshToken = doc["refresh_token"].as<String>();
   // As if spotify sends back a string that says "null" when using refresh token rather than excluding it
-  if (refreshToken != "null") {
+  if (refreshToken != "null")
+  {
     auth.refreshToken = refreshToken;
 
     // Try to write refresh token to file
     File f = LittleFS.open(TOKEN_PATH, "w");
-    if (!f) {
+    if (!f)
+    {
       #ifdef DEBUG
         Serial.println("Failed to write token to file...");
       #endif
@@ -85,13 +91,17 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   #endif
 }
 
-bool getAuth(bool refresh, bool fromFile, String code) {
+bool getAuth(bool refresh, bool fromFile, String code)
+{
   // Attempt to automatically get access token from saved refresh token
-  if (refresh && fromFile) {
+  if (refresh && fromFile)
+  {
     File f = LittleFS.open(TOKEN_PATH, "r");
-    if (f) {
+    if (f)
+    {
       auth.refreshToken = f.readString();
-      if (auth.refreshToken.length() == 0) {
+      if (auth.refreshToken.length() == 0)
+      {
         refresh = false;
       }
       f.close();
@@ -100,12 +110,16 @@ bool getAuth(bool refresh, bool fromFile, String code) {
 
   // Fail if client is busy
   if (httpsAuth.readyState() != readyStateUnsent && httpsAuth.readyState() != readyStateDone) return false;
-  if (httpsAuth.open("POST", "https://accounts.spotify.com/api/token")) {
+  if (httpsAuth.open("POST", "https://accounts.spotify.com/api/token"))
+  {
     String body;
-    if (refresh) {
+    if (refresh)
+    {
       body = "grant_type=refresh_token&refresh_token=" + auth.refreshToken;
     
-    } else {
+    }
+    else
+    {
       body = "grant_type=authorization_code&code=" + code + 
              "&redirect_uri=http://" + WiFi.localIP().toString() + "/callback";
     }
@@ -116,7 +130,9 @@ bool getAuth(bool refresh, bool fromFile, String code) {
     httpsAuth.send(body);
     return true;
 
-  } else {
+  }
+  else
+  {
     #ifdef DEBUG
       Serial.println("Connection failed!");
     #endif
@@ -126,7 +142,8 @@ bool getAuth(bool refresh, bool fromFile, String code) {
 
 // ------------------------------- GET CURRENTLY PLAYING -------------------------------
 
-void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
+void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readyState)
+{
   // Fail if client is not done or response failed
   if (readyState != readyStateDone) return;
   if (request->responseHTTPcode() != 200) return;
@@ -155,10 +172,14 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
 
   DeserializationError err = deserializeJson(doc, json, DeserializationOption::Filter(filter));
   #ifdef DEBUG
-    Serial.printf("Deserialization rept: Overrun %d, Capacity %zu\n", doc.overflowed(), doc.capacity());
+    if (doc.overflowed())
+    {
+      Serial.printf("Deserialization rept: Overrun %d, Capacity %zu\n", doc.overflowed(), doc.capacity());
+    }
   #endif
 
-  if (err) {
+  if (err)
+  {
     #ifdef DEBUG
       Serial.print(F("Deserialisation failed"));
       Serial.println(err.f_str());
@@ -183,12 +204,14 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
   song.artistName   = item["artists"][0]["name"].as<String>();
   song.durationMs   = item["duration_ms"].as<int>();
 
-  for (int i = 0; i < images.size(); i++) {
+  for (int i = 0; i < images.size(); i++)
+  {
     int height = images[i]["height"].as<int>();
     int width  = images[i]["width"].as<int>();
 
     // Only grab appropriate sized image
-    if (height <= IMG_H * IMG_SCALE && width <= IMG_W * IMG_SCALE) {
+    if (height <= IMG_H * IMG_SCALE && width <= IMG_W * IMG_SCALE)
+    {
       song.height = height;
       song.width  = width;
       song.imgUrl = images[i]["url"].as<String>();
@@ -200,17 +223,21 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
   newSong = song.id != prevId; 
 }
 
-bool getCurrentlyPlaying() {
+bool getCurrentlyPlaying()
+{
   // Fail if client is busy
   if (httpsCurrent.readyState() != readyStateUnsent && httpsCurrent.readyState() != readyStateDone) return false;
-  if (httpsCurrent.open("GET", "https://api.spotify.com/v1/me/player")) {
+  if (httpsCurrent.open("GET", "https://api.spotify.com/v1/me/player"))
+  {
     String authStr = "Bearer " + auth.accessToken;
     httpsCurrent.setReqHeader("Cache-Control", "no-cache");
     httpsCurrent.setReqHeader("Authorization", authStr.c_str());
     httpsCurrent.send();
     return true;
 
-  } else {
+  }
+  else
+  {
     #ifdef DEBUG
       Serial.println("Connection failed!");
     #endif
@@ -221,22 +248,24 @@ bool getCurrentlyPlaying() {
 // ------------------------------- GET ALBUM ART -------------------------------
 
 // Synchronous due to large file size limitations
-bool getAlbumArt() {
+bool getAlbumArt()
+{
 
-  if (!song.imgUrl) {
+  if (!song.imgUrl)
+  {
     #ifdef DEBUG
       Serial.println("No image url available.");
     #endif
     return false;
   }
 
-  HTTPClient client;
   client.begin(song.imgUrl);
   client.setTimeout(REQ_TIMEOUT);
   client.addHeader("Cache-Control", "no-cache");
 
   int resp = client.GET();
-  if (resp != 200) {
+  if (resp != 200)
+  {
     #ifdef DEBUG
       Serial.printf("An error occurred while getting image %c\nHTTP %d\n", song.imgUrl, resp);
     #endif
@@ -245,7 +274,8 @@ bool getAlbumArt() {
   }
 
   File f = LittleFS.open(IMG_PATH, "w");
-  if (!f) {
+  if (!f)
+  {
     #ifdef DEBUG
       Serial.println("Failed to open file descriptor.");
     #endif
@@ -257,9 +287,11 @@ bool getAlbumArt() {
   int offset = 0;
   uint8_t buf[STREAM_BUF_SIZE];
   Stream* data = client.getStreamPtr();
-  while (offset < numBytes) {
+  while (offset < numBytes)
+  {
     int available = data->available();
-    if (available) {
+    if (available)
+    {
       int bytes = data->readBytes(buf, min(available, STREAM_BUF_SIZE));
       f.write(buf, bytes);
       offset += bytes;
@@ -279,12 +311,14 @@ bool getAlbumArt() {
 
 // ------------------------------- VOLUME CONTROL -------------------------------
 
-void volumeSetCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
+void volumeSetCB(void* optParam, AsyncHTTPSRequest* request, int readyState)
+{
   // Fail if client hasnt finished reading or response failed
   if (readyState != readyStateDone) return;
 
   Serial.println("An error occurred: HTTP \n" + request->responseHTTPcode());
-  if (request->responseHTTPcode() != 200) {
+  if (request->responseHTTPcode() != 200)
+  {
     #ifdef DEBUG
       Serial.println("An error occurred: HTTP " + request->responseHTTPcode());
     #endif
@@ -292,26 +326,29 @@ void volumeSetCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   }
 }
 
-bool updateVolume() {
+bool updateVolume()
+{
   // Fail if client isnt ready
   if (httpsVolume.readyState() != readyStateUnsent && httpsVolume.readyState() != readyStateDone) return false;
 
-  char* format = "https://api.spotify.com/v1/me/player/volume?volume_percent=%d";
-  char buf[96];
-  sprintf(buf, format, song.volume);
+  String url = "https://api.spotify.com/v1/me/player/volume?volume_percent=" + String(song.volume);
 
   #ifdef DEBUG
     Serial.printf("Setting volume to: %d\n", song.volume);
   #endif
 
-  if (httpsVolume.open("PUT", buf)) {
+  if (httpsVolume.open("PUT", url.c_str()))
+  {
     String authStr = "Bearer " + auth.accessToken;
     httpsVolume.setReqHeader("Authorization", authStr.c_str());
+    httpsVolume.setReqHeader("Cache-Control", "no-cache");
+    httpsVolume.setReqHeader("Content-Length", "0");
     httpsVolume.send();
-    Serial.printf("Sent %s\n", buf);
+    Serial.printf("Sent %s\n", url.c_str());
     return true;
-
-  } else {
+  }
+  else
+  {
     #ifdef DEBUG
       Serial.println("Connection failed!");
     #endif
@@ -319,12 +356,25 @@ bool updateVolume() {
   }
 }
 
+// ------------------------------- TEXT -------------------------------
+
+void writeSongText(DFRobot_ST7789_240x320_HW_SPI& screen, uint16_t color)
+{
+  // Rewrite song/artist text
+  screen.setTextSize(2);
+  screen.setCursor(TEXT_X, TEXT_Y);
+  screen.print(song.songName);
+  screen.setTextSize(1);
+  screen.print(song.artistName);
+}
+
 // ------------------------------- TJPG -------------------------------
 
 static unsigned int rSeed = 43;
 
 // Big primes and overflows should be good enough
-int fast_rand() {
+int fast_rand()
+{
   rSeed = 396437 * rSeed + 45955009;
   return (rSeed >> 16) & 0x7FFF;
 }
@@ -333,20 +383,24 @@ uint16_t r, g, b;
 bool sampleColor = false;
 
 // Callback for TJpg draw function, draws scaled jpeg with gradient backfill
-bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap)
+{
   // Take average color components of the first block of the image
-  if (sampleColor) {
+  if (sampleColor)
+  {
     sampleColor = false;
     r = 0;
     g = 0;
     b = 0;
     uint16_t rr = 0, rg = 0, rb = 0;
-    for (int i = 0; i < w * h; i++) {
+    for (int i = 0; i < w * h; i++)
+    {
       // Ensure average isnt black skewed too heavily
       rr = ((bitmap[i] >> 11) & 0x1F);
       rg = ((bitmap[i] >> 5) & 0x3F);
       rb = (bitmap[i] & 0x1F);
-      if (rr + rg + rb < GRADIENT_BLACK_THRESHOLD) {
+      if (rr + rg + rb < GRADIENT_BLACK_THRESHOLD)
+      {
         rr = r;
         rg = g;
         rb = b;
@@ -356,6 +410,7 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
       g = (g * i + rg) / (i + 1);
       b = (b * i + rb) / (i + 1);
     }
+
     #ifdef DEBUG
       Serial.printf("Gradient start color = r(%u) g(%u) b(%u)\n", r, g, b);
     #endif
@@ -363,15 +418,19 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
 
   // Dont draw gradient if its too dark or covered by the image
   bool drawBackfill = x == IMG_X || (y == IMG_Y + IMG_H - h && x == IMG_X + IMG_W - w);
-  if (drawBackfill && r + g + b > GRADIENT_BLACK_THRESHOLD) {
+  if (drawBackfill && r + g + b > GRADIENT_BLACK_THRESHOLD)
+  {
     int yStart = y == IMG_Y ? 0 : y;
     int yEnd = y == IMG_Y + IMG_H - h && x == IMG_X + IMG_W - w ? 300 : y + h;
-    for (int gy = yStart; gy < yEnd; gy++) {
-      for (int gx = 0; gx < TFT_WIDTH; gx++) {
+    for (int gy = yStart; gy < yEnd; gy++)
+    {
+      for (int gx = 0; gx < TFT_WIDTH; gx++)
+      {
         bool overlapX = gx >= IMG_X && gx < IMG_X + IMG_W;
         bool overlapY = gy >= IMG_Y && gy < IMG_Y + IMG_H;
 
-        if (!(overlapX && overlapY)) {
+        if (!(overlapX && overlapY))
+        {
           double grad = (300 - gy - (fast_rand() % 25)) / (double) 300;
           grad = grad < 0 ? 0 : grad;
           uint8_t rGrad = r * grad;
@@ -385,7 +444,8 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
       playbackBar.draw(screen, 0);
       
       // Dont overwrite text with background fill
-      if (gy > TEXT_Y) {
+      if (gy > TEXT_Y)
+      {
         writeSongText(screen, COLOR_RGB565_WHITE);
       }
     }
@@ -400,7 +460,8 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
 
 // ------------------------------- WEBSERVER -------------------------------
 
-void webServerHandleRoot() {
+void webServerHandleRoot()
+{
   String header = "https://accounts.spotify.com/authorize?client_id=" + String(CLIENT) +
                   "&response_type=code&redirect_uri=http://" + WiFi.localIP().toString() +
                   "/callback&scope=%20user-modify-playback-state%20user-read-currently-playing%20" +
@@ -410,31 +471,25 @@ void webServerHandleRoot() {
   server.send(302, "text/html", "");
 }
 
-void webServerHandleCallback() {
-  if (server.arg("code") != "") {
-    if (getAuth(/*refresh=*/false, /*fromFile=*/false, server.arg("code"))) {
+void webServerHandleCallback()
+{
+  if (server.arg("code") != "")
+  {
+    if (getAuth(/*refresh=*/false, /*fromFile=*/false, server.arg("code")))
+    {
       server.send(200, "text/html", "Login complete! you may close this tab.\r\n");
-    
-    } else {
+    }
+    else
+    {
       server.send(200, "text/html", "Authentication failed... Please try again :(\r\n");
     }
   } 
   #ifdef DEBUG
-    else {
+    else
+    {
       Serial.println("An error occurred. Server provided no code arg.");
     }
   #endif
-}
-
-// ------------------------------- TEXT -------------------------------
-
-void writeSongText(DFRobot_ST7789_240x320_HW_SPI& screen, uint16_t color) {
-  // Rewrite song/artist text
-  screen.setTextSize(2);
-  screen.setCursor(TEXT_X, TEXT_Y);
-  screen.print(song.songName);
-  screen.setTextSize(1);
-  screen.print(song.artistName);
 }
 
 // ------------------------------- MAIN -------------------------------
@@ -448,13 +503,15 @@ uint32_t lastVolRequest   = 0;
 uint32_t lastSongRequest  = 0;
 int      authRefreshFails = 0;
 
-void setup() {
+void setup()
+{
   #ifdef DEBUG
     Serial.begin(9600);
   #endif
 
   // Initialise LittleFS
-  if (!LittleFS.begin()) {
+  if (!LittleFS.begin())
+  {
     #ifdef DEBUG
       Serial.println("Failed to initialise file system.");
     #endif
@@ -482,10 +539,14 @@ void setup() {
   httpsAuth.onReadyStateChange(authCB);
   httpsCurrent.onReadyStateChange(currentlyPlayingCB);
   httpsVolume.onReadyStateChange(volumeSetCB);
+
+  client.setReuse(true);
 }
 
-void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
+void loop()
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
     #ifdef DEBUG
       Serial.println("WiFi reconnecting.");
     #endif
@@ -498,28 +559,34 @@ void loop() {
   server.handleClient();
   delay(50);
 
-  if (!accessTokenSet && !triedFileToken) {
-    if (getAuth(/*refresh=*/true, /*fromFile=*/true, "")) {
+  if (!accessTokenSet && !triedFileToken)
+  {
+    if (getAuth(/*refresh=*/true, /*fromFile=*/true, ""))
+    {
       uint32_t timeout = millis() + REQ_TIMEOUT;
       while (!triedFileToken && timeout > millis()) yield();
     }
-    #ifdef DEBUG
-      else {
-        Serial.println("Auth from refresh token file failed...");
-      }
-    #endif
+  #ifdef DEBUG
+    else
+    {
+      Serial.println("Auth from refresh token file failed...");
+    }
+  #endif
 
     triedFileToken = true;
   }
 
   // Auto refresh auth token when it expires
-  if (millis() > auth.expiry && authRefreshFails < MAX_AUTH_REFRESH_FAILS) {
+  if (millis() > auth.expiry && authRefreshFails < MAX_AUTH_REFRESH_FAILS)
+  {
     getAuth(/*refresh=*/true, /*fromFile=*/false, "");
     accessTokenSet = false;
     uint32_t timeout = millis() + REQ_TIMEOUT;
-    while (!accessTokenSet) {    
+    while (!accessTokenSet)
+    {    
       // Attempt authorisation refresh next iteration if timedout
-      if (timeout < millis()) {
+      if (timeout < millis())
+      {
         authRefreshFails++;
         return;
       }
@@ -533,7 +600,8 @@ void loop() {
   }
 
   // Force user to login if auth refresh fails multiple times
-  if (!accessTokenSet) {
+  if (!accessTokenSet)
+  {
     authRefreshFails = 0;
     screen.setCursor(0,0);
     screen.setTextSize(2);
@@ -542,11 +610,13 @@ void loop() {
   }
 
   // Read potentiometer value at fixed interval
-  if (millis() - lastPotRead > POT_READ_RATE) {
+  if (millis() - lastPotRead > POT_READ_RATE)
+  {
     int newVol = 100 - 100 * (analogRead(POT) / (float) 4096);
 
     // Account for pot wobble
-    if (abs(song.volume - newVol) > 2) {
+    if (abs(song.volume - newVol) > 2)
+    {
       lastPotChange = millis();
       song.volume = newVol;
     }
@@ -555,14 +625,16 @@ void loop() {
   }
 
   // Only send api POST when pot hasnt changed for a while
-  if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT && millis() - lastVolRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE) {
+  if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT && millis() - lastVolRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE)
+  {
     lastPotChange = 0;
     lastVolRequest = millis();
     lastRequest = lastVolRequest;
     updateVolume();
   }
 
-  if (millis() - lastSongRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE) {
+  if (millis() - lastSongRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE)
+  {
     #ifdef DEBUG
       Serial.printf("\nStack:%d,Heap:%lu\n", uxTaskGetStackHighWaterMark(NULL), (unsigned long) ESP.getFreeHeap());
     #endif
@@ -572,9 +644,11 @@ void loop() {
     yield();
   }
 
-  if (readFlag) {
+  if (readFlag)
+  {
     readFlag = false;
-    if (newSong) {
+    if (newSong)
+    {
       // Clear album art and song/artist text
       screen.fillRect(0, 0, TFT_WIDTH, 300, COLOR_RGB565_BLACK);
       // Close playback bar wave when switching songs
@@ -592,10 +666,12 @@ void loop() {
     playbackBar.setPlayState(song.isPlaying);
     playbackBar.draw(screen, true);
 
-    if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT && millis() - lastRequest > REQUEST_RATE) {
+    if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT && millis() - lastRequest > REQUEST_RATE)
+    {
       lastImgRequest = millis();
       lastRequest = lastImgRequest;
-      if (getAlbumArt()) {
+      if (getAlbumArt())
+      {
         // Process and draw background gradient and album art
         sampleColor = true;
         TJpgDec.drawFsJpg(IMG_X, IMG_Y, IMG_PATH, LittleFS);
