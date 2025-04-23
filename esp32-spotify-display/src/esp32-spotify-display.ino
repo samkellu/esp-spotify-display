@@ -7,6 +7,7 @@ WebServer server(80);
 AsyncHTTPSRequest httpsAuth;
 AsyncHTTPSRequest httpsCurrent;
 AsyncHTTPSRequest httpsVolume;
+
 SongInfo song;
 AuthInfo auth;
 
@@ -26,6 +27,7 @@ void connect(const char* ssid, const char* passphrase) {
     Serial.printf("Attempting connection to %s\n", ssid);
   #endif
 
+  WiFi.mode(WIFI_STA);
   // Wait for connection
   WiFi.begin(ssid, passphrase);
   while (WiFi.status() != WL_CONNECTED) delay(100);
@@ -73,8 +75,8 @@ void authCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
       return;
     }
 
-  f.print(auth.refreshToken);
-  f.close();
+    f.print(auth.refreshToken);
+    f.close();
   }
 
   accessTokenSet = true;
@@ -201,7 +203,6 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
 bool getCurrentlyPlaying() {
   // Fail if client is busy
   if (httpsCurrent.readyState() != readyStateUnsent && httpsCurrent.readyState() != readyStateDone) return false;
-
   if (httpsCurrent.open("GET", "https://api.spotify.com/v1/me/player")) {
     String authStr = "Bearer " + auth.accessToken;
     httpsCurrent.setReqHeader("Cache-Control", "no-cache");
@@ -281,6 +282,8 @@ bool getAlbumArt() {
 void volumeSetCB(void* optParam, AsyncHTTPSRequest* request, int readyState) {
   // Fail if client hasnt finished reading or response failed
   if (readyState != readyStateDone) return;
+
+  Serial.println("An error occurred: HTTP \n" + request->responseHTTPcode());
   if (request->responseHTTPcode() != 200) {
     #ifdef DEBUG
       Serial.println("An error occurred: HTTP " + request->responseHTTPcode());
@@ -294,15 +297,18 @@ bool updateVolume() {
   if (httpsVolume.readyState() != readyStateUnsent && httpsVolume.readyState() != readyStateDone) return false;
 
   char* format = "https://api.spotify.com/v1/me/player/volume?volume_percent=%d";
-  char buf[128];
+  char buf[96];
   sprintf(buf, format, song.volume);
 
+  #ifdef DEBUG
+    Serial.printf("Setting volume to: %d\n", song.volume);
+  #endif
+
   if (httpsVolume.open("PUT", buf)) {
-    sprintf(buf, "Bearer %s", auth.accessToken);
-    httpsVolume.setReqHeader("Authorization", buf);
-    httpsVolume.setReqHeader("Cache-Control", "no-cache");
-    httpsVolume.setReqHeader("Content-Length", "0");
+    String authStr = "Bearer " + auth.accessToken;
+    httpsVolume.setReqHeader("Authorization", authStr.c_str());
     httpsVolume.send();
+    Serial.printf("Sent %s\n", buf);
     return true;
 
   } else {
@@ -311,8 +317,6 @@ bool updateVolume() {
     #endif
     return false;
   }
-
-  return true;
 }
 
 // ------------------------------- TJPG -------------------------------
@@ -440,11 +444,13 @@ uint32_t lastRequest      = 0;
 uint32_t lastPotRead      = 0;
 uint32_t lastPotChange    = 0;
 uint32_t lastImgRequest   = 0;
+uint32_t lastVolRequest   = 0;
+uint32_t lastSongRequest  = 0;
 int      authRefreshFails = 0;
 
 void setup() {
   #ifdef DEBUG
-    Serial.begin(115200);
+    Serial.begin(9600);
   #endif
 
   // Initialise LittleFS
@@ -490,7 +496,7 @@ void loop() {
   }
 
   server.handleClient();
-  yield();
+  delay(50);
 
   if (!accessTokenSet && !triedFileToken) {
     if (getAuth(/*refresh=*/true, /*fromFile=*/true, "")) {
@@ -535,11 +541,33 @@ void loop() {
     return;
   }
 
-  if (millis() - lastRequest > REQUEST_RATE) {
+  // Read potentiometer value at fixed interval
+  if (millis() - lastPotRead > POT_READ_RATE) {
+    int newVol = 100 - 100 * (analogRead(POT) / (float) 4096);
+
+    // Account for pot wobble
+    if (abs(song.volume - newVol) > 2) {
+      lastPotChange = millis();
+      song.volume = newVol;
+    }
+
+    lastPotRead = millis();
+  }
+
+  // Only send api POST when pot hasnt changed for a while
+  if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT && millis() - lastVolRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE) {
+    lastPotChange = 0;
+    lastVolRequest = millis();
+    lastRequest = lastVolRequest;
+    updateVolume();
+  }
+
+  if (millis() - lastSongRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE) {
     #ifdef DEBUG
       Serial.printf("\nStack:%d,Heap:%lu\n", uxTaskGetStackHighWaterMark(NULL), (unsigned long) ESP.getFreeHeap());
     #endif
-    lastRequest = millis();
+    lastSongRequest = millis();
+    lastRequest = lastSongRequest;
     getCurrentlyPlaying();
     yield();
   }
@@ -564,8 +592,9 @@ void loop() {
     playbackBar.setPlayState(song.isPlaying);
     playbackBar.draw(screen, true);
 
-    if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT) {
+    if (!imageSet && millis() - lastImgRequest > REQ_TIMEOUT && millis() - lastRequest > REQUEST_RATE) {
       lastImgRequest = millis();
+      lastRequest = lastImgRequest;
       if (getAlbumArt()) {
         // Process and draw background gradient and album art
         sampleColor = true;
@@ -575,27 +604,6 @@ void loop() {
     }
   }
 
-  // // Read potentiometer value at fixed interval
-  // if (millis() - lastPotRead > POT_READ_RATE) {
-  //   int newVol = 100 * (analogRead(POT) / (float) 1023);
-
-  //   // Account for pot wobble
-  //   if (abs(song.volume - newVol) > 2) {
-  //     lastPotChange = millis();
-  //     song.volume = newVol;
-  //   }
-
-  //   lastPotRead = millis();
-  // }
-
-  // // Only send api POST when pot hasnt changed for a while
-  // if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT) {
-  //   lastPotChange = 0;
-  //   updateVolume();
-  // }
-
   // Slowly change amplitude of playback bar wave
-
-
   playbackBar.draw(screen, false);
 }
