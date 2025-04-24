@@ -5,8 +5,7 @@ PlaybackBar playbackBar = PlaybackBar(15, 310, TFT_WIDTH-30, 5, 8, 0.1, 50);
 WebServer server(80);
 
 AsyncHTTPSRequest httpsAuth;
-AsyncHTTPSRequest httpsCurrent;
-AsyncHTTPSRequest httpsVolume;
+AsyncHTTPSRequest httpsSpotify;
 HTTPClient client;
 
 SongInfo song;
@@ -226,15 +225,16 @@ void currentlyPlayingCB(void* optParam, AsyncHTTPSRequest* request, int readySta
 bool getCurrentlyPlaying()
 {
   // Fail if client is busy
-  if (httpsCurrent.readyState() != readyStateUnsent && httpsCurrent.readyState() != readyStateDone) return false;
-  if (httpsCurrent.open("GET", "https://api.spotify.com/v1/me/player"))
+  if (httpsSpotify.readyState() != readyStateUnsent && httpsSpotify.readyState() != readyStateDone) return false;
+
+  httpsSpotify.onReadyStateChange(currentlyPlayingCB);
+  if (httpsSpotify.open("GET", "https://api.spotify.com/v1/me/player"))
   {
     String authStr = "Bearer " + auth.accessToken;
-    httpsCurrent.setReqHeader("Cache-Control", "no-cache");
-    httpsCurrent.setReqHeader("Authorization", authStr.c_str());
-    httpsCurrent.send();
+    httpsSpotify.setReqHeader("Cache-Control", "no-cache");
+    httpsSpotify.setReqHeader("Authorization", authStr.c_str());
+    httpsSpotify.send();
     return true;
-
   }
   else
   {
@@ -250,7 +250,6 @@ bool getCurrentlyPlaying()
 // Synchronous due to large file size limitations
 bool getAlbumArt()
 {
-
   if (!song.imgUrl)
   {
     #ifdef DEBUG
@@ -329,7 +328,7 @@ void volumeSetCB(void* optParam, AsyncHTTPSRequest* request, int readyState)
 bool updateVolume()
 {
   // Fail if client isnt ready
-  if (httpsVolume.readyState() != readyStateUnsent && httpsVolume.readyState() != readyStateDone) return false;
+  if (httpsSpotify.readyState() != readyStateUnsent && httpsSpotify.readyState() != readyStateDone) return false;
 
   String url = "https://api.spotify.com/v1/me/player/volume?volume_percent=" + String(song.volume);
 
@@ -337,13 +336,15 @@ bool updateVolume()
     Serial.printf("Setting volume to: %d\n", song.volume);
   #endif
 
-  if (httpsVolume.open("PUT", url.c_str()))
+  httpsSpotify.onReadyStateChange(volumeSetCB);
+  httpsSpotify.setDebug(true);
+  if (httpsSpotify.open("PUT", url.c_str()))
   {
     String authStr = "Bearer " + auth.accessToken;
-    httpsVolume.setReqHeader("Authorization", authStr.c_str());
-    httpsVolume.setReqHeader("Cache-Control", "no-cache");
-    httpsVolume.setReqHeader("Content-Length", "0");
-    httpsVolume.send();
+    httpsSpotify.setReqHeader("Authorization", authStr.c_str());
+    httpsSpotify.setReqHeader("Cache-Control", "no-cache");
+    httpsSpotify.setReqHeader("Content-Length", "0");
+    httpsSpotify.send();
     Serial.printf("curl -X PUT %s -H Authorization: %s -H Cache-Control: no-cache -H Content-Length: 0\n", url.c_str(), authStr.c_str());
     return true;
   }
@@ -536,8 +537,6 @@ void setup()
   TJpgDec.setJpgScale(IMG_SCALE);
 
   httpsAuth.onReadyStateChange(authCB);
-  httpsCurrent.onReadyStateChange(currentlyPlayingCB);
-  httpsVolume.onReadyStateChange(volumeSetCB);
 
   client.setReuse(true);
 }
@@ -618,6 +617,7 @@ void loop()
     {
       lastPotChange = millis();
       song.volume = newVol;
+      playbackBar.setTargetAmplitude(song.volume);
     }
 
     lastPotRead = millis();
@@ -632,6 +632,7 @@ void loop()
     lastVolRequest = millis();
     lastRequest = lastVolRequest;
     updateVolume();
+    yield();
   }
 
   if (forceFetch || millis() - lastSongRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE)
@@ -681,6 +682,5 @@ void loop()
     }
   }
 
-  // Slowly change amplitude of playback bar wave
   playbackBar.draw(screen, false);
 }
