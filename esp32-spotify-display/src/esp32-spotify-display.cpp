@@ -344,7 +344,7 @@ bool updateVolume()
     httpsVolume.setReqHeader("Cache-Control", "no-cache");
     httpsVolume.setReqHeader("Content-Length", "0");
     httpsVolume.send();
-    Serial.printf("Sent %s\n", url.c_str());
+    Serial.printf("curl -X PUT %s -H Authorization: %s -H Cache-Control: no-cache -H Content-Length: 0\n", url.c_str(), authStr.c_str());
     return true;
   }
   else
@@ -441,13 +441,12 @@ bool processBmp(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap)
       }
 
       // Animate playback bar when drawing backfill
-      playbackBar.draw(screen, 0);
+      if (gy < IMG_Y || gy > IMG_Y + IMG_H)
+        playbackBar.draw(screen, 0);
       
       // Dont overwrite text with background fill
       if (gy > TEXT_Y)
-      {
         writeSongText(screen, COLOR_RGB565_WHITE);
-      }
     }
   }
 
@@ -557,7 +556,7 @@ void loop()
   }
 
   server.handleClient();
-  delay(50);
+  yield();
 
   if (!accessTokenSet && !triedFileToken)
   {
@@ -624,16 +623,18 @@ void loop()
     lastPotRead = millis();
   }
 
+  bool forceFetch = false;
   // Only send api POST when pot hasnt changed for a while
   if (lastPotChange != 0 && millis() - lastPotChange > POT_WAIT && millis() - lastVolRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE)
   {
+    forceFetch = true;
     lastPotChange = 0;
     lastVolRequest = millis();
     lastRequest = lastVolRequest;
     updateVolume();
   }
 
-  if (millis() - lastSongRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE)
+  if (forceFetch || millis() - lastSongRequest > SONG_REQUEST_RATE && millis() - lastRequest > REQUEST_RATE)
   {
     #ifdef DEBUG
       Serial.printf("\nStack:%d,Heap:%lu\n", uxTaskGetStackHighWaterMark(NULL), (unsigned long) ESP.getFreeHeap());

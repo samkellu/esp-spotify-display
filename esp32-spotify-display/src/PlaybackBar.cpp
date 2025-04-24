@@ -22,7 +22,6 @@ void PlaybackBar::draw(DFRobot_ST7789_240x320_HW_SPI& screen, bool force) {
     progress = min(interpolatedTime, duration);
   }
 
-
   // Slowly change amplitude of playback bar wave
   int target = playing ? targetAmplitudePercent : 0;
   if (amplitudePercent != target) {

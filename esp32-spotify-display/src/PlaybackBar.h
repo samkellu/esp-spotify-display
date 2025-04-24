@@ -2,7 +2,7 @@
 #define PLAYBACKBAR_H
 #include "DFRobot_GDL.h"
 
-#define AMPLITUDE_D 1
+#define AMPLITUDE_D 2
 
 class PlaybackBar {
   private:
